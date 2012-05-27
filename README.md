@@ -1,10 +1,10 @@
 Peloton
 =======
 
-Description
------------
+# Description
+
 NIO/event based web library for Clojure
 
-License
--------
+# License
+
 GPL v3 or later.
