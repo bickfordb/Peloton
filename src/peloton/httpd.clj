@@ -497,3 +497,38 @@
               (react)))
         threads (doseq [i (range num-threads)] (doto (Thread. f) (.start)))] 
     (doseq [^Thread t threads] (.join t))))
+
+(defn write-file-channel-chunk!
+  [^FileChannel channel 
+   offset 
+   len]
+
+(defn write-file-channel!
+  [^FileChannel channel 
+   offset 
+   len]
+  (loop [offset offset
+         len len]
+    (let [amt (safe -1 (.transferTo offset len (.socketChannel *conn*)))]
+      (cond
+        (< amt -1) (close-with-error! "failed to write!")
+        (= amt 0) (on-socket-write-ready write-file-channel! offset len)
+        :else (recur (+ offset amt) (- len amt))))))
+
+(defn create-file-handler
+  [^String dir & opts]
+  (let [opts0 (apply hash-map opts)]
+    (fn [^String path] 
+      (let [f (safe nil (java.io.RandomAccessFile. (File. (java.io.File. dir) path) "r"))
+            ch (when (not-nil? f) (safe nil (.getChannel f)))
+            offset 0
+            content-type "application/octet-stream"
+            sz (if (not-nil? f) (.size ch) 0)]
+        (if (nil? ch)
+          (on-404)
+          (let []
+            (add-response-header! "Content-Type" content-type)
+            (add-response-header! "Content-Length" sz)
+            (send-headers!)
+            (write-file-channel! ch sz)))))))
+

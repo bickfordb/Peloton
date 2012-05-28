@@ -33,5 +33,6 @@
      :listen-backlog 10
      :ports (filter #(not (nil? %)) (map safe-int ports))}
     [:GET #"^/$" index-handler]
+    [:GET #"^/etc/(.+)$" (create-file-handler "/etc/")]
     [:GET #"^/chunked$" chunked-handler]))
 

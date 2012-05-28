@@ -14,6 +14,8 @@
      ~@body
      (catch Exception e# ~default)))
 
+(defn not-nil? [x] (not (nil? x)))
+
 (defn safe-int 
   [^String s] 
   (try
