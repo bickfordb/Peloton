@@ -6,6 +6,13 @@
 
 (defonce NEWLINE #^int (int 10))
 (defonce ISO-8859-1 #^Charset (.get (Charset/availableCharsets) "ISO-8859-1"))
+(defonce UTF-8 #^Charset (.get (Charset/availableCharsets) "ISO-8859-1"))
+
+(defmacro safe
+  [default & body]
+  `(try 
+     ~@body
+     (catch Exception e# ~default)))
 
 (defn safe-int 
   [^String s] 
@@ -33,7 +40,7 @@
 
 (defn line-parser 
   []
-  (peloton.core/LineParser. (ByteArrayOutputStream. )))
+  (LineParser. (ByteArrayOutputStream. )))
 
 (defonce empty-bytes (bytes (into-array Byte/TYPE [])))
 
