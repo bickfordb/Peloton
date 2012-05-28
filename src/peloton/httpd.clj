@@ -7,6 +7,9 @@
   (:import java.nio.ByteBuffer)
   (:import java.net.InetSocketAddress)
   (:import java.nio.charset.Charset)
+  (:import java.nio.channels.FileChannel)
+  (:import java.io.File)
+  (:import java.io.RandomAccessFile)
   (:import java.nio.channels.ServerSocketChannel)
   (:import java.nio.channels.SocketChannel)
   (:import java.nio.channels.Selector)
@@ -498,37 +501,58 @@
         threads (doseq [i (range num-threads)] (doto (Thread. f) (.start)))] 
     (doseq [^Thread t threads] (.join t))))
 
-(defn write-file-channel-chunk!
-  [^FileChannel channel 
-   offset 
-   len]
-
 (defn write-file-channel!
   [^FileChannel channel 
    offset 
    len]
-  (loop [offset offset
-         len len]
-    (let [amt (safe -1 (.transferTo offset len (.socketChannel *conn*)))]
-      (cond
-        (< amt -1) (close-with-error! "failed to write!")
-        (= amt 0) (on-socket-write-ready write-file-channel! offset len)
-        :else (recur (+ offset amt) (- len amt))))))
+  (loop [offset (max offset 0)
+         len (max len 0)]
+    (if (> len 0)
+      (let [amt (safe -1 (.transferTo channel offset len (.socketChannel *conn*)))]
+        (cond
+          (< amt 0) (close-with-error! "failed to write file")
+          (= amt 0) (on-socket-write-ready write-file-channel! offset len)
+          :else (recur (+ offset amt) (- len amt))))
+      (finish-response!))))
+
+(def range-pat #"bytes=(\d+)(?:-(\d+))?")
+
+(defn parse-range-header
+  [s]
+  (let [m (when s (re-find range-pat s))
+        [a b c] m]
+    {:range-start-byte (safe-int b)
+     :range-end-byte (safe-int c)}))
 
 (defn create-file-handler
   [^String dir & opts]
   (let [opts0 (apply hash-map opts)]
     (fn [^String path] 
-      (let [f (safe nil (java.io.RandomAccessFile. (File. (java.io.File. dir) path) "r"))
-            ch (when (not-nil? f) (safe nil (.getChannel f)))
-            offset 0
-            content-type "application/octet-stream"
-            sz (if (not-nil? f) (.size ch) 0)]
+      (let [^RandomAccessFile f (safe nil (java.io.RandomAccessFile. (File. (java.io.File. dir) path) "r"))
+            ch (when (not-nil? f) (safe nil (.getChannel f)))]
         (if (nil? ch)
           (on-404)
-          (let []
+          (let [sz (safe 0 (.length f))
+                len sz
+                content-type "application/octet-stream"
+                range-header (get-header (-> *conn* (.request) (.headers)) "Range")
+                {:keys [range-start-byte range-end-byte]} (parse-range-header range-header)
+                offset (if (nil? range-start-byte) 0 range-start-byte)
+                len (if (nil? range-end-byte) 
+                      (- sz offset) 
+                      (+ (inc (- range-end-byte range-start-byte))))
+                after-headers (fn [] (write-file-channel! ch offset len))]
             (add-response-header! "Content-Type" content-type)
-            (add-response-header! "Content-Length" sz)
+            (add-response-header! "Accept-Ranges" "bytes")
+            (add-response-header! "Content-Length" len)
+            (when (or (> offset 0)
+                      (not (= len sz)))
+              (set-response-status! 206)
+              (set-response-message! "Partial Content")
+              (let [start-byte offset
+                    end-byte (dec (+ offset len))]
+                (add-response-header! "Content-Range" (format "%d-%d/%d" start-byte end-byte sz))))
             (send-headers!)
-            (write-file-channel! ch sz)))))))
+            (.add (.outBuffers *conn*) [(ByteBuffer/wrap empty-bytes) after-headers])
+            (send-buffers!)))))))
 
