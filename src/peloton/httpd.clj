@@ -1,6 +1,7 @@
 (ns peloton.httpd
   (:use peloton.util)
   (:use peloton.reactor)
+  (:require peloton.mime)
   (:use clojure.tools.logging)
   (:import java.io.ByteArrayOutputStream)
   (:import java.util.Vector)
@@ -526,7 +527,8 @@
 
 (defn create-file-handler
   [^String dir & opts]
-  (let [opts0 (apply hash-map opts)]
+  (let [opts0 (apply hash-map opts)
+        mime-types (get opts0 :mime-types peloton.mime/common-ext-to-mime-types)]
     (fn [^String path] 
       (let [^RandomAccessFile f (safe nil (java.io.RandomAccessFile. (File. (java.io.File. dir) path) "r"))
             ch (when (not-nil? f) (safe nil (.getChannel f)))]
@@ -542,7 +544,7 @@
                       (- sz offset) 
                       (+ (inc (- range-end-byte range-start-byte))))
                 after-headers (fn [] (write-file-channel! ch offset len))]
-            (add-response-header! "Content-Type" content-type)
+            (add-response-header! "Content-Type" (peloton.mime/guess-mime-type-of-path path mime-types))
             (add-response-header! "Accept-Ranges" "bytes")
             (add-response-header! "Content-Length" len)
             (when (or (> offset 0)
