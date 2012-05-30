@@ -224,7 +224,8 @@
 
 (defn on-selection-key 
   [stored-connection-state f fargs] 
-  (binding [*conn* stored-connection-state] (apply f fargs))
+  (binding [*conn* stored-connection-state] 
+    (apply f fargs))
   (.cancel selection-key))
 
 (defn on-socket-write-ready 
