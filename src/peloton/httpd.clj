@@ -190,9 +190,37 @@
 (defn set-response-status! [st] (.setStatus (.response *conn*) st))
 (defn set-response-message! [m] (.setMessage (.response *conn*) m))
 
+(def uri-pat #"^([^?#]+)(?:[?]([^#]+))?(?:[#](.+))?$")
+
+(defn parse-uri
+  [uri]
+  (cond 
+    (nil? uri) {:path "" 
+                :query ""
+                :fragment ""}
+    :else (let [match (re-find uri-pat uri)
+                [_ path qs fragment] match]
+            {:path (if path path "")
+             :query (if qs qs "")
+             :fragment (if fragment fragment "")})))
+
+(defn query-data
+  "Load the URL encoded data from the query string in the request line URI"
+  []
+  (let [{:keys [query]} (parse-uri (.uri (.request *conn*)))]
+   (parse-qs query)))
+
+(defn post-data
+  "Decode the \"URL-encoded\" (usually POST) data from the request body"
+  []
+  ; FIXME: read the character set in from the request headers
+  ; FIXME: handle multi-part requests
+  (-> (safe "" (String. (-> *conn* (.request) (.body)) #^Charset UTF-8)) (parse-qs)))
+
 (defn set-response-body!
+  "Set the response body"
   [^String s] 
-  (.setBody (.response *conn*) (.getBytes s #^Charset UTF-8)))
+  (-> *conn* (.response) (.setBody (.getBytes s #^Charset UTF-8))))
 
 (defn on-selection-key 
   [stored-connection-state f fargs] 
@@ -461,21 +489,24 @@
   (set-response-body! "<html><h1>404 Not Found</h1></html>")
   (send-response!))
 
+
+
 (defn with-routes
   [routes]
-  (fn []
-    (loop [routes0 routes]
-      (if (empty? routes0)
-        (on-404)
-        (let [[[pat-method pat-uri handler] & t] routes0
-              request (.request *conn*)]
-          (if (or (= pat-method :any) 
-                  (= (name pat-method) (.method request)))
-            (let [match (re-find pat-uri (.uri request))]
-              (if match 
-                (apply handler (rest match))
-                (recur t)))
-            (recur t)))))))
+  #(let [request (.request *conn*)
+          uri-info (parse-uri (.uri request))
+          {:keys [path]} uri-info]
+      (loop [routes0 routes]
+        (if (empty? routes0)
+          (on-404)
+          (let [[[pat-method pat-uri handler] & t] routes0]
+            (if (or (= pat-method :any) 
+                    (= (name pat-method) (.method request)))
+              (let [[match & match-args] (re-find0 pat-uri path)]
+                (if match 
+                  (apply handler match-args)
+                  (recur t)))
+              (recur t)))))))
 
 (defn listen!
   "Listen for connections"

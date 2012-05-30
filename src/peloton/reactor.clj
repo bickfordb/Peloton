@@ -13,7 +13,7 @@
 (def ^:dynamic ^SelectionKey selection-key)
 
 (defmacro with-reactor [& xs]
-  `(binding [selector (.openSelector (SelectorProvider/provider))
+  `(binding [selector (until (safe nil (.openSelector (SelectorProvider/provider))))
              *pending* (PriorityQueue.)] 
      ~@xs))
 

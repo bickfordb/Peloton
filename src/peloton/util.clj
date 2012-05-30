@@ -10,23 +10,23 @@
 
 (defmacro safe
   [default & body]
-  `(try 
+  `(try
      ~@body
      (catch Exception e# ~default)))
 
 (defn not-nil? [x] (not (nil? x)))
 
-(defn safe-int 
-  [^String s] 
+(defn safe-int
+  [^String s]
   (try
     (when (and (not (nil? s)) (> (count s) 0))
       (Integer. s))
     (catch Exception e nil)))
 
-(definterface ILineParser 
+(definterface ILineParser
   (^String put [^java.nio.ByteBuffer buffer]))
 
-(deftype LineParser 
+(deftype LineParser
   [^ByteArrayOutputStream bs]
   ILineParser
   (put [this buffer]
@@ -40,15 +40,47 @@
               ret)
             (recur)))))))
 
-(defn line-parser 
+(defn line-parser
   []
   (LineParser. (ByteArrayOutputStream. )))
 
 (defonce empty-bytes (bytes (into-array Byte/TYPE [])))
 
-(defn dump-buffer 
+(defn dump-buffer
   [^ByteBuffer b]
   (let [ret (String. (java.util.Arrays/copyOfRange (.array b) (.position b) (.limit b)) ISO-8859-1)
         ret0 (clojure.string/escape ret {\newline "\\n" \return "\\r"})]
     ret0))
 
+(defmacro until
+  "Keep executing body until it returns a non-nil result"
+  [& body]
+  `(let [f# (fn [] ~@body)]
+    (loop [g# (f#)]
+      (if (not-nil? g#)
+        g#
+        (recur (f#))))))
+
+(def amp-pat #"[&]")
+(def eq-pat #"=")
+
+(defn parse-qs
+  "Parse query string / form URL encoded data"
+  [s]
+  (cond
+    (nil? s) []
+    :else (filter #(not (nil? %)) 
+                  (for [p (clojure.string/split s amp-pat)]
+                    (let [[l r] (clojure.string/split p eq-pat 2)
+                          k (if l (java.net.URLDecoder/decode l) "")
+                          v (if r (java.net.URLDecoder/decode r) "")]
+                      (when (not (= k "")) [k v]))))))
+
+(defn re-find0 
+  "A version of re-find that consistently returns the same type"
+  [& xs]
+  (let [ret (apply re-find xs)]
+    (cond
+      (nil? ret) []
+      (string? ret) [ret]
+      :else ret)))
