@@ -63,7 +63,21 @@
          ))))
 
 (defmacro let-fut
-  "Execute a body"
+  "Execute a body when a sequence of futures are ready.
+
+  Example: 
+    (let-fut [[user-succ user-id] (create-user \"Brandon\" \"Bickford\")
+              [bus-succ business-id] (create-business \"Gary Danko\")
+              [review-succ review-id] (when (and user-id business-id) 
+                                        (create-review {:user user-id 
+                                                        :business business-id 
+                                                        :rating 5
+                                                        :comment  \"Liked it\" ))]
+        (println \"result\" {:user user-id 
+                             :business business-id 
+    :review review-id}))
+
+  "
   [fut-bindings & body]
   `(let-fut0 ~fut-bindings ~body))
 
