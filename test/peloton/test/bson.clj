@@ -3,7 +3,6 @@
   (:import java.io.ByteArrayOutputStream)
   (:use clojure.test))
 
-
 (def ex-1-doc {"hello" "world"})
 
 (def ex-2-doc {:BSON ["awesome" 5.05 1986]})

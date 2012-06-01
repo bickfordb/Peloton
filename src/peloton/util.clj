@@ -84,3 +84,18 @@
       (nil? ret) []
       (string? ret) [ret]
       :else ret)))
+
+(defn to-flag-bits 
+  ^long
+  [mapping flag-bit-def]
+  (apply bit-or (for [[flag-kw flag-bit] flag-bit-def]
+                  (if (get mapping flag-kw false) flag-bit 0))))
+
+(defn from-flag-bits 
+  "Convert a flag bits (encoded in a number) into a mapping of {flagi bool}"
+  [^long flag-bits flag-bit-def]
+  (apply assoc {} (apply concat
+                         (for [[flag-kw flag-bit] flag-bit-def]
+                           [flag-kw (> (bit-and flag-bit flag-bits) 0)]))))
+
+

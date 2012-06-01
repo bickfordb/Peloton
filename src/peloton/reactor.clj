@@ -44,3 +44,10 @@
         (let [[f & xs] (.attachment a-selection-key)]
             (apply f xs))))))
 
+(defn reactor-register
+  [s-key selectable f & fargs]
+  (.register selectable selector s-key [f fargs]))
+
+
+
+
