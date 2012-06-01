@@ -69,17 +69,20 @@
   The body will be executed when all of the futures in the bindings are delivered.  
 
   Example: 
-    (let-fut [[user-succ user-id] (create-user \"Brandon\" \"Bickford\")
-              [bus-succ business-id] (create-business \"Gary Danko\")
-              [review-succ review-id] (when (and user-id business-id) 
-                                        (create-review {:user user-id 
-                                                        :business business-id 
-                                                        :rating 5
-                                                        :comment  \"Liked it\" ))]
-        (println \"result\" {:user user-id 
-                             :business business-id 
-    :review review-id}))
+    (defn create-user ^Fut [first last] ...) 
+    (defn create-business ^Fut [] ...) 
+    (defn create-review ^Fut [user-id business-id rating comment] ...) 
 
+    (let-fut [[user-id] (create-user \"Brandon\" \"Bickford\")
+              [business-id] (create-business \"Gary Danko\")
+              [review-id] (when (and user-id business-id) 
+                                        (create-review user-id 
+                                                        business-id 
+                                                        5
+                                                        \"Liked it\" ))]
+        (println \"user:\" user-id)
+        (println \"business:\" business-id)
+        (println \"review:\" review-id))
   "
   [fut-bindings & body]
   `(let-fut0 ~fut-bindings ~body))

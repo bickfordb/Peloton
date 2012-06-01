@@ -39,3 +39,30 @@
     (is (= "hello there" @y))
     (is (= "goodbye" @z))))
 
+(deftest let-fut-test2
+         (let [f0 (fut)
+               f1 (fut)
+               c0 (atom nil)
+               c1 (atom nil)]
+           (let-fut [[v0] (f0) 
+                     [v1] (do 
+                          (reset! c0 :fired0)
+                          f1)]
+                    (reset! c1 :fired1))
+           (is (nil? @c0 ))
+           (is (nil? @c1 ))
+           (deliver! f0 "v0")
+           (is (nil? @c1 ))
+           (is (= @c0 :fired0))
+           (deliver! f1 "v1")
+           (is (= @c0 :fired0))
+           (is (= @c1 :fired1))
+          ))
+           
+           
+
+
+
+
+
+
