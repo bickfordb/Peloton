@@ -65,6 +65,9 @@
 (defmacro let-fut
   "Execute a body when a sequence of futures are ready.
 
+  Each binding will be executed when the future from the previous binding is delivered.
+  The body will be executed when all of the futures in the bindings are delivered.  
+
   Example: 
     (let-fut [[user-succ user-id] (create-user \"Brandon\" \"Bickford\")
               [bus-succ business-id] (create-business \"Gary Danko\")
