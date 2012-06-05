@@ -13,14 +13,14 @@
            (deliver! a-fut "hello")
            (is (= @y "hello"))))
 
-(deftest let-fut-test
+(deftest dofut-test
   (let [a-fut (fut)
         a-fut2 (fut)
         x (atom nil)
         y (atom nil)
         z (atom nil)]
     (is (nil? @y))
-    (let-fut
+    (dofut
       [[a-val0] a-fut
        [a-val1] a-fut2
        quux 25]
@@ -39,12 +39,12 @@
     (is (= "hello there" @y))
     (is (= "goodbye" @z))))
 
-(deftest let-fut-test2
+(deftest dofut-test2
          (let [f0 (fut)
                f1 (fut)
                c0 (atom nil)
                c1 (atom nil)]
-           (let-fut [[v0] (f0) 
+           (dofut [[v0] (f0) 
                      [v1] (do 
                           (reset! c0 :fired0)
                           f1)]

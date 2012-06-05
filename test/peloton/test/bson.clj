@@ -3,8 +3,6 @@
   (:import java.io.ByteArrayOutputStream)
   (:use clojure.test))
 
-(def ex-1-doc {"hello" "world"})
-
 (def ex-2-doc {:BSON ["awesome" 5.05 1986]})
 (def ex-2-encoded [49 0 0 0 4 66 83 79 78 0 38 0 0 0 2 48 0 8 0 0 0 97 119 101 115 111 109 101 0 1 49 0 51 51 51 51 51 51 20 64 16 50 0 194 7 0 0 0 0])
 
@@ -24,10 +22,6 @@
     (.toByteArray buf)))
 
 (deftest encode-examples
-  ;(let [expected (map #(int %) ex-2-encoded)
-  ;      result (map #(int %) (encode-doc ex-1-doc))]
-  ;  (is (= expected result)))
-
   (let [expected (apply str (map #(format " 0x%02x" %) ex-2-encoded))
         result (apply str (map #(format " 0x%02x" %) (encode-doc ex-2-doc)))]
     (is (= expected result))))
@@ -37,25 +31,25 @@
         expected ex-2-doc]
     (is (= expected result))))
 
-(deftest subdocs
+(deftest encode-doc-subdocs
          (is-enc-dec {:x {:y 5}}))
 
-(deftest object-id
+(deftest encode-doc-object-id
          (is-enc-dec {:_id (create-object-id)}))
 
-(deftest int
+(deftest encode-doc-int
          (is-enc-dec {:x 1}))
 
-(deftest strings
+(deftest encode-doc-strings
          (is-enc-dec {:x "abc"}))
 
-(deftest bool-true
+(deftest encode-doc-bool-true
          (is-enc-dec {:x false}))
 
-(deftest bool-false
+(deftest encode-doc-bool-false
          (is-enc-dec {:x true}))
 
-(deftest binary-test
+(deftest encode-decode-binary-test
          (let [doc {:a (byte-array [(byte 0x05)])}
                doc0 (decode-doc (encode-doc doc))]
            (is (java.util.Arrays/equals (:a doc) (:a doc0)))))

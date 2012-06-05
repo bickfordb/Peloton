@@ -47,7 +47,7 @@
   [x] 
   (instance? Fut x))
 
-(defmacro let-fut0
+(defmacro dofut0
   [bindings body]
   (if (empty? bindings)
     `(do ~@body)
@@ -59,12 +59,12 @@
            (subscribe! f#
                        (fn [ & xs# ] 
                          (let [~sym xs#]
-                           `~(let-fut0 ~t ~body)
+                           `~(dofut0 ~t ~body)
                            )))
            (let [~sym f#] 
-             `~(let-fut0 ~t ~body)))))))
+             `~(dofut0 ~t ~body)))))))
 
-(defmacro let-fut
+(defmacro dofut
   "Execute a body when a sequence of futures are ready.
 
   Each binding will be executed when the future from the previous binding is delivered.
@@ -75,7 +75,7 @@
     (defn create-business ^Fut [] ...) 
     (defn create-review ^Fut [user-id business-id rating comment] ...) 
 
-    (let-fut [[user-id] (create-user \"Brandon\" \"Bickford\")
+    (dofut [[user-id] (create-user \"Brandon\" \"Bickford\")
               [business-id] (create-business \"Gary Danko\")
               [review-id] (when (and user-id business-id) 
                                         (create-review user-id 
@@ -87,7 +87,7 @@
         (println \"review:\" review-id))
   "
   [fut-bindings & body]
-  `(let-fut0 ~fut-bindings ~body))
+  `(dofut0 ~fut-bindings ~body))
 
 (defn to-fut
   "Convert a function which takes a \"finish\" callback to a future" 

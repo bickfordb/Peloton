@@ -276,7 +276,7 @@
                       (= etype 0x01) (Double/longBitsToDouble (read-le-i64! bs))
                       (= etype 0x02) (check0 (read-string! bs))
                       (= etype 0x03) (check0 (read-doc! bs))
-                      (= etype 0x04) (map second (sort-by first (for [[k v] (read-doc! bs)] [(Integer/parseInt k) v])))
+                      (= etype 0x04) (map second (sort-by first (for [[k v] (read-doc! bs)] [(Integer/parseInt (name k)) v])))
                       (= etype 0x05) (let [len (read-le-i32! bs)
                                            subtype (read-i8! bs)]
                                        (condp = subtype 
