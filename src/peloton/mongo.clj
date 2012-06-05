@@ -60,24 +60,14 @@
     (try 
       (if (.finishConnect socket-channel)
         (do 
-          (with-stderr
-            (println "connected"))
           (let [conn (Connection.
                        socket-channel
                        (Vector. )
                        (atom nil))]
             (f conn)))
-        (with-stderr
-          (on-connect socket-channel on-connect f)
-          (println "failed to finish connection")))
+          (on-connect socket-channel on-connect f))
       (catch java.io.IOException e 
-        (with-stderr 
-          (println "failed to connect!"))
-        (f nil)))
-    (when (not (.isConnected socket-channel))
-      (with-stderr
-        (println "retrying connection"))
-      )))
+        (f nil)))))
 
 (defn send-buffers0! 
   [^Connection c]
@@ -85,8 +75,6 @@
     (cond
       (empty? (.out-buffers c)) (reset! (.state c) nil)
       :else (let [[^ByteBuffer b f fargs] (first (.out-buffers c))]
-              ;(with-stderr
-              ;  (println "b" b "f" f "fargs" fargs (.remaining b)))
               (cond 
                 (= (.remaining b) 0) (do 
                                        (.removeElementAt (.out-buffers c) 0)
@@ -94,7 +82,6 @@
                                          (apply f true fargs))
                                        (recur))
                 :else (do 
-                        ;(with-stderr (println "Writing"))
                         (condp = (safe -1 (.write (.socket-channel c) b))
                           -1 (do 
                                (apply f false fargs)
@@ -124,7 +111,7 @@
    on-write]
   (let [buffer (ByteBuffer/allocate 4)]
     (.order buffer ByteOrder/LITTLE_ENDIAN)
-    (.putInt buffer (count b))
+    (.putInt buffer (+ (count b) 4))
     (.flip buffer)
     (write-buffer! c buffer nib))
   (write-buffer! c (ByteBuffer/wrap b) on-write))
@@ -164,8 +151,6 @@
   [conn collection-name docs after]
   (if conn
     (do 
-      (with-stderr
-        (println "insert" collection-name "docs" docs))
       (let [body (ByteArrayOutputStream.)
             docs0 (map bson/add-object-id docs)]
         (put-header! body (:insert op-codes))
@@ -196,12 +181,8 @@
                                 docs (let 
                                        [bs (ByteArrayInputStream. (bits/slice-remaining-buffer b))]
                                        (loop [dset []]
-                                         (with-stderr
-                                           (println "Read docs"))
                                          (cond 
                                            (> (.available bs) 0) (let [d (bson/read-doc! bs)]
-                                                                   (with-stderr 
-                                                                     (println "doc" d))
                                                                    (if (nil? d) 
                                                                      (recur dset)
                                                                      (recur (conj dset d))))
@@ -215,12 +196,9 @@
 
 (defn read-packet! 
   [conn on-reply]
-  (with-stderr
-    (println "reading packet!"))
   (io/read-le-i32!  
     (.socket-channel conn)
     (fn [sz] 
-      (println "got" sz)
       (cond 
         (nil? sz) (on-reply nil)
         :else (io/read-to-buf!
@@ -228,10 +206,7 @@
                 (- sz 4)
                 (fn [^ByteBuffer b]
                   (.flip b)
-                  (let [p (parse-packet b)]
-                    (with-stderr "packet: " (println p))
-                    (on-reply p))
-                  ))))))
+                  (on-reply (parse-packet b))))))))
 
 (defn query! 
   [conn 
@@ -249,24 +224,21 @@
           fs-doc (when fieldset
                    (reduce conj (for [f fieldset] {f 1})))
           after0 (fn [succ?]
-                   (with-stderr
-                     (println "write: " succ?))
                    (if (not succ?)
                      (after nil)
                      (read-packet! conn after)))]
       (put-header! bs (:query op-codes))
-      (bits/put-le-i32! bs 0)
-      (bits/put-cstring! bs collection-name)
-      (bits/put-le-i32! bs offset)
-      (bits/put-le-i32! bs limit)
+      (bits/put-le-i32! bs 0) ; flags
+      (bits/put-cstring! bs collection-name) ; name
+      (bits/put-le-i32! bs offset) ; offset
+      (bits/put-le-i32! bs limit) ; number to return
       (.write bs (bson/encode-doc query-doc))
       (when fs-doc
         (.write bs (bson/encode-doc fs-doc)))
       (write-frame! conn (.toByteArray bs) after0))
     (after nil)))
 
-
-(def query-fut! (to-fut query!))
+(def query-fut! (to-fut query! 3))
 
 (defn connect! 
   [^String address 
@@ -283,8 +255,6 @@
       (.setSoTimeout 0)
       (.setTcpNoDelay false))
 
-    (binding [*out* *err*]
-      (println "connecting"))  
     (io/on-connected socket-channel on-connect f)
     (.connect socket-channel addr)))
 

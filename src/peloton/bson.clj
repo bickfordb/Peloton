@@ -19,14 +19,10 @@
 
 (defrecord MD5 [^bytes bytes])
 
-(defprotocol IObject
-  (^boolean equals [other])
-;  (^int hashCode [])
-  )
-
 (deftype ObjectID [^bytes id]
    Object 
-    (hashCode [this] (+ (hash ObjectID) (hash id)))
+    (toString [this] (format "(ObjectID. %s)" (encode-hex id))) 
+    (hashCode [this] (+ (hash ObjectID) (apply + (seq id))))
     (equals [this other] 
       (cond 
         (not (instance? ObjectID other)) false
@@ -55,7 +51,8 @@
 
 (defmacro put-pair! 
   [bs code a-key & body]
-  `(let [key0# (if (keyword? ~a-key) (name ~a-key) ~a-key)]
+  `(let [k# ~a-key
+         key0# (if (keyword? k#) (name k#) k#)]
      (.write #^ByteArrayOutputStream ~bs (int ~code))
      (put-cstring! ~bs key0#)
      ~@body))
@@ -76,7 +73,6 @@
     (.write bs 0)
     (.write bs 0)
     (doseq [[k v] doc] 
-
       (cond 
         (float? v) (put-pair! bs 
                               0x01 
@@ -85,11 +81,10 @@
         (string? v) (put-pair! bs 
                                0x02 
                                k 
-                               (let [b (.getBytes v #^Charset UTF-8)
-                                     n (count b)]
-                                 (put-le-i32! bs (inc n))
-                                 (.write bs b 0 n)
-                                 (.write bs 0)))
+                               (let [b (.getBytes v #^Charset UTF-8)]
+                                 (put-le-i32! bs (inc (count b)))
+                                 (.write bs b)
+                                 (.write bs (byte 0))))
         
         ; 0x05, 0x0 generic bytes
         (instance? bytes-type v) (put-pair! bs
@@ -249,11 +244,26 @@
    ;^long 
    n]
   (let [buf (ByteArrayOutputStream. n)]
-    (loop [n n]
-      (when (and (> n 0) (> (.available bs) 0))
+    (loop [i n]
+      (when (and (> i 0) (> (.available bs) 0))
         (.write buf (.read bs))
-        (recur (dec n))))
-    (.toByteArray buf)))
+        (recur (dec i))))
+    (cond 
+      (= (.size buf) n) (.toByteArray buf)
+      :else (throw (Exception. (format "expecting %d bytes" n))))))
+
+(defn check
+  [x]
+  (cond
+    (nil? x) (throw (Exception. "unexpected nil"))
+    :else x))
+
+(defmacro check0
+  [x]
+  `(let [v# ~x]
+    (cond 
+      (nil? v#) (throw (Exception. "unexpected nil"))
+      :else v#)))
 
 (defn read-doc! 
   [^ByteArrayInputStream bs]
@@ -263,23 +273,24 @@
       (when (not (or (= etype 0) (nil? etype)))
         (let [a-name (read-cstring! bs)
               a-val (cond
-                      (= etype 0x01) (safe nil (Double/longBitsToDouble (read-le-i64! bs)))
-                      (= etype 0x02) (read-string! bs)
-                      (= etype 0x03) (read-doc! bs)
-                      (= etype 0x04) (map second (sort-by first (for [[k v] (read-doc! bs)] [(safe-int k) v])))
+                      (= etype 0x01) (Double/longBitsToDouble (read-le-i64! bs))
+                      (= etype 0x02) (check0 (read-string! bs))
+                      (= etype 0x03) (check0 (read-doc! bs))
+                      (= etype 0x04) (map second (sort-by first (for [[k v] (read-doc! bs)] [(Integer/parseInt k) v])))
                       (= etype 0x05) (let [len (read-le-i32! bs)
                                            subtype (read-i8! bs)]
                                        (condp = subtype 
-                                         0x00 (read-bytes! bs len)
-                                         0x01 (Function. (read-bytes! bs len))
-                                         0x02 (read-bytes! bs len)
+                                         0x00 (check0 (read-bytes! bs len))
+                                         0x01 (Function. (check0 (read-bytes! bs len)))
+                                         0x02 (check0 (read-bytes! bs len))
                                          0x03 (let [lsb (read-le-i64! bs)
                                                     msb (read-le-i64! bs)]
                                                 (UUID. msb lsb))
                                          0x05 (MD5. (read-bytes! bs len))
-                                         0x80 (UserDefined. (read-bytes! bs len))))
+                                         0x80 (UserDefined. (check0 (read-bytes! bs len)))
+                                         :else (throw (Exception. "unexpected subtype"))))
                       (= etype 0x06) undefined
-                      (= etype 0x07) (let [b (read-bytes! bs 12)]
+                      (= etype 0x07) (let [b (check0 (read-bytes! bs 12))]
                                        (when b (ObjectID. b)))
                       (= etype 0x08) (condp = (read-i8! bs)
                                        0x00 false
@@ -314,10 +325,10 @@
                       (= etype 0x12) (read-le-i64! bs)
                       (= etype 0xFF) (Min.)
                       (= etype 0x7F) (Max.)
-                      :else nil)]
+                      :else (throw (Exception. (format "unexpected etype 0x%X" (int etype)))))]
           (assoc! doc (keyword a-name) a-val)
           (recur (read-i8! bs)))))
-    (read-i8! bs)
+    ;(read-i8! bs)
     (persistent! doc)))
 
 (defn decode-doc

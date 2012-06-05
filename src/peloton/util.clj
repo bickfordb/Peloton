@@ -109,3 +109,8 @@
 
 (defn nib [& xs] nil)
 
+(defn encode-hex
+  [m]
+  (apply str (for [i m] 
+               (format "%x" i))))
+

@@ -14,8 +14,6 @@
 (defn reg
   [socket-channel op f & fargs]
   (reactor/later 0
-                 (with-stderr
-                   (println "register:" (from-flag-bits op selection-key-flags) f fargs))
                  (let [g (fn [] 
                            (apply f fargs)
                            (.cancel reactor/selection-key))]
@@ -31,8 +29,6 @@
 
 (defn on-connected
   [^SocketChannel socket-channel f & fargs]
-  (with-stderr
-    (println "wait for connect"))
   (apply reg socket-channel SelectionKey/OP_CONNECT f fargs))
   
 (defn fill-buffer!
@@ -40,39 +36,17 @@
   [^SocketChannel socket-channel 
    ^ByteBuffer buffer 
    on-buffer]
-  (with-stderr
-    (println "Fill buffer" buffer on-buffer))
   (loop []
      (cond
        (= (.remaining buffer) 0) (on-buffer buffer)
        :else (let [amt (.read socket-channel buffer)] 
-               (with-stderr 
-                 (println "read" amt))
                (condp = amt
                  -1 (on-buffer buffer)
                  0 (on-readable socket-channel fill-buffer! socket-channel buffer on-buffer)
                  (recur))))))
 
-;(defn read-n-bytes!
-;  "Read up to n bytes"
-;  [^SocketChannel socket-channel 
-;   ^long n 
-;   on-bytes]
-;  (with-stderr 
-;    (println "read n" n on-bytes))
-;  (fill-buffer! 
-;    socket-channel 
-;    (ByteBuffer/allocate n) 
-;    (fn [^ByteBuffer buffer] 
-;      (cond 
-;        (> (.remaining buffer) 0) (on-bytes nil)
-;        :else (do
-;                (on-bytes (.array buffer)))))))
-
 (defn read-to-buf! 
   [ch ^long n on-buf]
-  (with-stderr
-    (println "reading buf" n on-buf))
   (fill-buffer! ch 
                 (ByteBuffer/allocate n) 
                 (fn [^ByteBuffer b]
@@ -84,8 +58,6 @@
 (defn read-le-i32!
   [^SocketChannel ch
    on-int]
-  (with-stderr
-    (println "reading int" on-int))
   (read-to-buf! 
     ch
     4

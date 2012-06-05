@@ -27,9 +27,8 @@
 
 (defn put-cstring!
   [^ByteArrayOutputStream bs
-   ^String key]
-  (let [key0 (.getBytes key #^Charset UTF-8)]
-    (.write bs key0 0 (count key0)))
+   ^String a-str]
+  (.write bs (.getBytes a-str #^Charset UTF-8))
   (.write bs 0))
 
 (defn read-le-i32!
@@ -81,8 +80,6 @@
 
 (defn slice-remaining-buffer
   ^bytes [^ByteBuffer b]
-  (with-stderr
-    (println b))
   (slice-buffer b (.position b) (long (- (.limit b) (.position b)))))
 
 (defn remove-bit

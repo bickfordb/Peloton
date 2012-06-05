@@ -43,8 +43,6 @@
     (doseq [a-selection-key (.selectedKeys selector)]
       (binding [selection-key a-selection-key]
         (let [[f & xs] (.attachment a-selection-key)]
-          (with-stderr 
-            (println "f" f "xs" xs))
           (apply f xs))))))
 
 (defn register

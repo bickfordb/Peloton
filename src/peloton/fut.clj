@@ -31,7 +31,8 @@
     (reset! (.done fut) true)
     (reset! (.promised fut) promised)
     (doseq [h @(.listeners fut)]
-      (apply h promised))))
+      (apply h promised))
+    (reset! (.promised fut) [])))
 
 (defn subscribe!
   "Subscribe to a future"
@@ -89,10 +90,19 @@
   `(let-fut0 ~fut-bindings ~body))
 
 (defn to-fut
-  [f]
+  "Convert a function which takes a \"finish\" callback to a future" 
+  ([f]
   (fn [ & xs] 
     (let [^Fut a-fut (fut)
-          g (fn [& xs] (apply deliver! a-fut xs))]
+          g (fn [& ys] (apply deliver! a-fut ys))]
       (apply f (concat xs [g]))
       a-fut)))
+  ([f arg-idx]
+   (fn [ & xs] 
+    (let [^Fut a-fut (fut)
+          g (fn [& ys] (apply deliver! a-fut ys))]
+      (apply f (concat (take arg-idx xs) [g] (drop arg-idx xs)))
+      a-fut))))
+
+
 
