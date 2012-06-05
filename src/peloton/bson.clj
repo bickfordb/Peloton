@@ -1,19 +1,40 @@
 (ns peloton.bson 
   (:import java.util.regex.Pattern)
   (:import java.util.Date)
+  (:import java.nio.ByteBuffer)
   (:import java.io.ByteArrayOutputStream)
   (:import java.io.ByteArrayInputStream)
   (:import java.util.UUID)
   (:import java.sql.Timestamp)
   (:import java.nio.charset.Charset)
+  (:use peloton.bits)
   (:use peloton.util))
+
+(defonce machine-id #^long (-> (java.util.Random.) (.nextLong)))
+(defonce last-object-id (atom 1))
 
 (defrecord Min [])
 (defrecord Max [])
 (defrecord JavaScript [^String js scope])
-;(defrecord Timestamp [timestamp])
+
 (defrecord MD5 [^bytes bytes])
-(defrecord ObjectID [^bytes id])
+
+(defprotocol IObject
+  (^boolean equals [other])
+;  (^int hashCode [])
+  )
+
+(deftype ObjectID [^bytes id]
+   Object 
+    (hashCode [this] (+ (hash ObjectID) (hash id)))
+    (equals [this other] 
+      (cond 
+        (not (instance? ObjectID other)) false
+        (and (nil? id) (nil? (.id #^ObjectID other))) true
+        (nil? id) false
+        (nil? (.id #^ObjectID other)) false
+        :else (java.util.Arrays/equals id (.id #^ObjectID other)))))
+
 (defrecord UserDefined [^bytes bytes])
 (defrecord Function [^bytes bytes])
 (defrecord DBPointer [^String a-ns ^bytes some-bytes])
@@ -24,38 +45,11 @@
 
 (def bytes-type (type (byte-array [])))
 
-(defn put-i32! 
-  [^ByteArrayOutputStream bs
-   ^long n]
-  (.write bs (bit-and 0x0ff n))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 8)))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 16)))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 24))))
-
-(defn put-i64! 
-  [^ByteArrayOutputStream bs
-   ^long n]
-  (.write bs (bit-and 0x0ff n))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 8)))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 16)))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 24)))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 32)))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 40)))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 48)))
-  (.write bs (bit-and 0x0ff (bit-shift-right n 56))))
-
-(defn put-cstring!
-  [^ByteArrayOutputStream bs
-   ^String key]
-  (let [key0 (.getBytes key #^Charset UTF-8)]
-    (.write bs key0 0 (count key0)))
-  (.write bs 0))
-
 (defn put-string! 
   [^ByteArrayOutputStream bs
    ^String s]
   (let [b (.getBytes s #^Charset UTF-8)]
-    (put-i32! bs (+ 1 (count b)))
+    (put-le-i32! bs (+ 1 (count b)))
     (.write bs b 0 (count b))
     (.write bs 0)))
 
@@ -87,39 +81,28 @@
         (float? v) (put-pair! bs 
                               0x01 
                               k 
-                              (put-i64! bs (Double/doubleToLongBits v)))
+                              (put-le-i64! bs (Double/doubleToLongBits v)))
         (string? v) (put-pair! bs 
                                0x02 
                                k 
                                (let [b (.getBytes v #^Charset UTF-8)
                                      n (count b)]
-                                 (put-i32! bs (inc n))
+                                 (put-le-i32! bs (inc n))
                                  (.write bs b 0 n)
                                  (.write bs 0)))
-        (map? v) (put-pair! bs 
-                            0x03 
-                            k 
-                            (let [b (encode-doc v)]
-                              (.write bs b 0 (count b))))
-        (sequential? v) (put-pair! bs 
-                                   0x04 
-                                   k 
-                                   (let [a-doc (for [[i v] (map-indexed vector v)]
-                                                 [(str i) v])
-                                         doc-bytes (encode-doc a-doc)]
-                                     (.write bs #^bytes doc-bytes 0 (count doc-bytes))))
+        
         ; 0x05, 0x0 generic bytes
         (instance? bytes-type v) (put-pair! bs
                                             0x05 
                                             k
-                                            (put-i32! bs (count v))
+                                            (put-le-i32! bs (count v))
                                             (.write bs 0x00)
                                             (.write bs #^bytes v 0 (count v)))
         ; 0x05, 0x01 function
         (instance? Function v) (put-pair! bs
                                           0x05 
                                           k
-                                          (put-i32! bs (count (:bytes v)))
+                                          (put-le-i32! bs (count (:bytes v)))
                                           (.write bs 0x01)
                                           (.write bs #^bytes (:bytes v) 0 (count (:bytes v))))
         ; 0x05, 0x02 binary old
@@ -128,31 +111,31 @@
                              bs
                              0x05
                              k
-                             (put-i32! bs 8)
+                             (put-le-i32! bs 8)
                              (.write bs 0x03)
-                             (put-i64! bs (.getLeastSignificantBits #^UUID v))
-                             (put-i64! bs (.getMostSignificantBits #^UUID v)))
+                             (put-le-i64! bs (.getLeastSignificantBits #^UUID v))
+                             (put-le-i64! bs (.getMostSignificantBits #^UUID v)))
         ; 0x05, 0x05 MD5
         (instance? MD5 v) (put-pair! bs
                                      0x05
                                      k
-                                     (put-i32! bs (count (:bytes v)))
+                                     (put-le-i32! bs (count (:bytes v)))
                                      (.write bs 0x05)
                                      (.write bs (:bytes v) 0 (count (:bytes v))))
         ; 0x05, 0x80 UserDefined
         (instance? UserDefined v) (put-pair! bs
                                              0x05
                                              k
-                                             (put-i32! bs (count (:bytes v)))
+                                             (put-le-i32! bs (count (:bytes v)))
                                              (.write bs 0x80)
-                                             (.write bs (:bytes v) 0 (count (:bytes v))))
+                                             (.write bs (.bytes #^UserDefined v) 0 (count (:bytes v))))
         ; 0x06 - undefined
         (instance? Undefined v) (put-pair! bs 0x06 k)
         ; 0x07 - ObjectID
         (instance? ObjectID v) (put-pair! bs
                                           0x07 
                                           k 
-                                          (.write bs (:bytes v) 12))
+                                          (.write bs (.id #^ObjectID v) 0 12))
         ; 0x08 bool 
         (instance? Boolean v) (put-pair! bs 
                                          0x08 
@@ -162,7 +145,7 @@
         (instance? Date v) (put-pair! bs
                                       0x09
                                       k
-                                      (put-i64! bs (.getTime #^Date v)))
+                                      (put-le-i64! bs (.getTime #^Date v)))
         ; 0x0A null
         (nil? v) (put-pair! bs 0x0a k)
         ; 0x0B regex
@@ -199,8 +182,8 @@
                                                   s-bytes (.getBytes #^String (:code v) #^Charset UTF-8)
                                                   s-len (count s-bytes)
                                                   n (+ 4 4 s-len 1 d-len)]
-                                              (put-i32! bs n)
-                                              (put-i32! bs (inc s-len))
+                                              (put-le-i32! bs n)
+                                              (put-le-i32! bs (inc s-len))
                                               (.write bs s-bytes 0 s-len)
                                               (.write bs 0)
                                               (.write bs doc-bytes 0 d-len)))
@@ -208,21 +191,33 @@
         (integer? v) (put-pair! bs 
                                 0x10
                                 k
-                                (put-i32! bs v))
+                                (put-le-i32! bs v))
         ; 0x11 timestamp
         (instance? Timestamp v) (put-pair! bs
                                            0x11
                                            k
-                                           (put-i64! (.getTime #^Timestamp v)))
+                                           (put-le-i64! (.getTime #^Timestamp v)))
         ; 0x12 i64
         (instance? Long v) (put-pair! bs
                                       0x12
                                       k
-                                      (put-i64! v))
+                                      (put-le-i64! v))
         ; 0xff min
         (instance? Min) (put-pair! bs 0xFF k)
         ; 0x7f max
-        (instance? Max) (put-pair! bs 0x7F k)))
+        (instance? Max) (put-pair! bs 0x7F k)
+        (map? v) (put-pair! bs 
+                            0x03 
+                            k 
+                            (let [b (encode-doc v)]
+                              (.write bs b 0 (count b))))
+        (sequential? v) (put-pair! bs 
+                                   0x04 
+                                   k 
+                                   (let [a-doc (for [[i v] (map-indexed vector v)]
+                                                 [(str i) v])
+                                         doc-bytes (encode-doc a-doc)]
+                                     (.write bs #^bytes doc-bytes 0 (count doc-bytes))))))
     (.write bs 0)
     (let [^bytes a (.toByteArray bs)
           n (count a)]
@@ -233,50 +228,10 @@
       a)))
 
 
-(defn read-i32!
-  ^long
-  [^ByteArrayInputStream bs]
-  (if (>= (.available bs) 4)
-    (bit-or (.read bs) 
-            (bit-shift-left (.read bs) 8)
-            (bit-shift-left (.read bs) 16)
-            (bit-shift-left (.read bs) 24)) 0))
-
-(defn read-i64! 
-  ^long
-  [^ByteArrayInputStream bs]
-  (if (>= (.available bs) 8)
-    (bit-or (.read bs) 
-            (bit-shift-left (.read bs) 8)
-            (bit-shift-left (.read bs) 16)
-            (bit-shift-left (.read bs) 24) 
-            (bit-shift-left (.read bs) 32)
-            (bit-shift-left (.read bs) 40)
-            (bit-shift-left (.read bs) 48)
-            (bit-shift-left (.read bs) 56)) 0))
-
-(defn read-i8! 
-  ^Integer
-  [^ByteArrayInputStream bs]
-  (when (>= (.available bs) 1)
-    (.read bs)))
-
-(defn read-cstring! 
-  ^String
-  [^ByteArrayInputStream bs]
-  (let [buf (ByteArrayOutputStream. 1)]
-    (loop []
-      (let [b (read-i8! bs)]
-        (cond 
-          (nil? b) nil
-          (= b 0x0) (String. (.toByteArray buf) #^Charset UTF-8)
-          :else (let []
-                  (.write buf b)
-                  (recur)))))))
 
 (defn read-string! 
   [^ByteArrayInputStream bs]
-  (let [n (read-i32! bs)
+  (let [n (read-le-i32! bs)
         buf (ByteArrayOutputStream. (dec n))]
     ; the prefix is 
     (loop []
@@ -291,7 +246,8 @@
 (defn read-bytes! 
   ^bytes
   [^ByteArrayInputStream bs 
-   ^long n]
+   ;^long 
+   n]
   (let [buf (ByteArrayOutputStream. n)]
     (loop [n n]
       (when (and (> n 0) (> (.available bs) 0))
@@ -302,34 +258,34 @@
 (defn read-doc! 
   [^ByteArrayInputStream bs]
   (let [doc (transient {})
-        doc-len (read-i32! bs)]
+        doc-len (read-le-i32! bs)]
     (loop [etype (read-i8! bs)]
       (when (not (or (= etype 0) (nil? etype)))
         (let [a-name (read-cstring! bs)
               a-val (cond
-                      (= etype 0x01) (safe nil (Double/longBitsToDouble (read-i64! bs)))
+                      (= etype 0x01) (safe nil (Double/longBitsToDouble (read-le-i64! bs)))
                       (= etype 0x02) (read-string! bs)
                       (= etype 0x03) (read-doc! bs)
                       (= etype 0x04) (map second (sort-by first (for [[k v] (read-doc! bs)] [(safe-int k) v])))
-                      (= etype 0x05) (let [len (read-i32! bs)
+                      (= etype 0x05) (let [len (read-le-i32! bs)
                                            subtype (read-i8! bs)]
                                        (condp = subtype 
-                                         0x00 (read-bytes! len)
-                                         0x01 (Function. (read-bytes! len))
-                                         0x02 (read-bytes! len)
-                                         0x03 (let [lsb (read-i64! bs)
-                                                    msb (read-i64! bs)]
+                                         0x00 (read-bytes! bs len)
+                                         0x01 (Function. (read-bytes! bs len))
+                                         0x02 (read-bytes! bs len)
+                                         0x03 (let [lsb (read-le-i64! bs)
+                                                    msb (read-le-i64! bs)]
                                                 (UUID. msb lsb))
-                                         0x05 (MD5. (read-bytes! len))
-                                         0x80 (UserDefined. (read-bytes! len))))
+                                         0x05 (MD5. (read-bytes! bs len))
+                                         0x80 (UserDefined. (read-bytes! bs len))))
                       (= etype 0x06) undefined
-                      (= etype 0x07) (let [b (read-bytes! 12)]
+                      (= etype 0x07) (let [b (read-bytes! bs 12)]
                                        (when b (ObjectID. b)))
                       (= etype 0x08) (condp = (read-i8! bs)
                                        0x00 false
                                        0x01 true
                                        nil)
-                      (= etype 0x09) (let [b (read-i64! bs)]
+                      (= etype 0x09) (let [b (read-le-i64! bs)]
                                        (when (not (nil? b)) (Date. b)))
                       (= etype 0x0A) nil
                       (= etype 0x0B) (let [pat-s (read-cstring! bs)
@@ -352,10 +308,10 @@
                                            doc (read-doc! bs)]
                                        (when (and s doc)
                                          (JavaScript. s doc)))
-                      (= etype 0x10) (read-i32! bs)
-                      (= etype 0x11) (let [b (read-i64! bs)]
+                      (= etype 0x10) (read-le-i32! bs)
+                      (= etype 0x11) (let [b (read-le-i64! bs)]
                                        (when (not (nil? b)) (Timestamp. b)))
-                      (= etype 0x12) (read-i64! bs)
+                      (= etype 0x12) (read-le-i64! bs)
                       (= etype 0xFF) (Min.)
                       (= etype 0x7F) (Max.)
                       :else nil)]
@@ -368,4 +324,21 @@
   [^bytes in-doc-bytes]
   (let [bs (ByteArrayInputStream. in-doc-bytes)]
     (read-doc! bs)))
+
+(defn create-object-id
+  []
+  (let [bs (ByteBuffer/allocate 12)
+        t0 (System/currentTimeMillis)
+        m (long machine-id)
+        i (long (swap! last-object-id inc))]
+    (.putInt bs (bit-and (long (/ t0 10000.0)) 0x7fffffff))
+    (.putInt bs (int (bit-and machine-id 0x7fffffff)))
+    (.putInt bs (bit-and i 0x7fffffff))
+    (ObjectID. (.array bs))))
+
+(defn add-object-id 
+  [doc]
+  (if (contains? doc :_id) 
+    doc
+    (assoc doc :_id (create-object-id))))
 

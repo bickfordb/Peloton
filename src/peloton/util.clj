@@ -1,8 +1,11 @@
 (ns peloton.util
+  (:import java.io.ByteArrayInputStream)
   (:import java.io.ByteArrayOutputStream)
-  (:require clojure.string)
+  (:import java.nio.ByteBuffer)
+  (:import java.nio.channels.SocketChannel)
   (:import java.nio.charset.Charset)
-  (:import java.nio.ByteBuffer))
+  (:require clojure.string)
+  )
 
 (defonce NEWLINE #^int (int 10))
 (defonce ISO-8859-1 #^Charset (.get (Charset/availableCharsets) "ISO-8859-1"))
@@ -98,4 +101,11 @@
                          (for [[flag-kw flag-bit] flag-bit-def]
                            [flag-kw (> (bit-and flag-bit flag-bits) 0)]))))
 
+
+
+(defmacro with-stderr 
+  [ & body] 
+  `(binding [*out* *err*] ~@body))
+
+(defn nib [& xs] nil)
 

@@ -1,9 +1,10 @@
 (ns peloton.reactor
   (:import java.net.InetSocketAddress)
-  (:import java.nio.channels.ServerSocketChannel)
-  (:import java.nio.channels.SocketChannel)
+  ;(:import java.nio.channels.ServerSocketChannel)
+  ;(:import java.nio.channels.SocketChannel)
   (:import java.nio.channels.Selector)
   (:import java.nio.channels.SelectionKey)
+  (:import java.nio.channels.SelectableChannel)
   (:import java.nio.channels.spi.SelectorProvider)
   (:import java.util.PriorityQueue)
   (:use peloton.util))
@@ -42,12 +43,11 @@
     (doseq [a-selection-key (.selectedKeys selector)]
       (binding [selection-key a-selection-key]
         (let [[f & xs] (.attachment a-selection-key)]
-            (apply f xs))))))
+          (with-stderr 
+            (println "f" f "xs" xs))
+          (apply f xs))))))
 
-(defn reactor-register
-  [s-key selectable f & fargs]
-  (.register selectable selector s-key [f fargs]))
-
-
-
+(defn register
+  [^SelectableChannel selectable s-key f & fargs]
+  (.register selectable selector (int s-key) (cons f fargs)))
 

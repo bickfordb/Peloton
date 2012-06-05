@@ -2,7 +2,8 @@
   "Fancy asynchronous future library
   
   This is named \"fut\" instead of \"future\" to avoid conflicting with the built-in future blocking/synchronous future support
-  ")
+  "
+  )
 
 (declare subscribe!)
 
@@ -37,7 +38,7 @@
   [^Fut fut 
    ^clojure.lang.IFn f]
   (if @(.done fut)
-    (apply f (.values fut))
+    (apply f @(.promised fut))
     (swap! (.listeners fut) conj f)))
 
 (defn fut? 
@@ -52,15 +53,15 @@
     (let [sym (first bindings)
           fut (second bindings)
           t (nthrest bindings 2)]
-      `(if (fut? ~fut)
-         (subscribe! ~fut
-                     (fn [ & xs# ] 
-                       (let [~sym xs#]
-                         `~(let-fut0 ~t ~body)
-                         )))
-         (let [~sym ~fut] 
-           `~(let-fut0 ~t ~body))
-         ))))
+      `(let [f# ~fut]
+         (if (fut? f#)
+           (subscribe! f#
+                       (fn [ & xs# ] 
+                         (let [~sym xs#]
+                           `~(let-fut0 ~t ~body)
+                           )))
+           (let [~sym f#] 
+             `~(let-fut0 ~t ~body)))))))
 
 (defmacro let-fut
   "Execute a body when a sequence of futures are ready.
@@ -86,4 +87,12 @@
   "
   [fut-bindings & body]
   `(let-fut0 ~fut-bindings ~body))
+
+(defn to-fut
+  [f]
+  (fn [ & xs] 
+    (let [^Fut a-fut (fut)
+          g (fn [& xs] (apply deliver! a-fut xs))]
+      (apply f (concat xs [g]))
+      a-fut)))
 

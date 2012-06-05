@@ -8,6 +8,14 @@
 (def ex-2-doc {:BSON ["awesome" 5.05 1986]})
 (def ex-2-encoded [49 0 0 0 4 66 83 79 78 0 38 0 0 0 2 48 0 8 0 0 0 97 119 101 115 111 109 101 0 1 49 0 51 51 51 51 51 51 20 64 16 50 0 194 7 0 0 0 0])
 
+(defmacro is-enc-dec
+  [doc]
+  `(do
+     (let [doc# ~doc]
+      (is (= 
+            doc# 
+            (decode-doc (encode-doc doc#)))))))
+
 (defn from-unsigned-bytes 
   [xs]
   (let [buf (ByteArrayOutputStream. )]
@@ -28,4 +36,27 @@
   (let [result (decode-doc (from-unsigned-bytes ex-2-encoded))
         expected ex-2-doc]
     (is (= expected result))))
+
+(deftest subdocs
+         (is-enc-dec {:x {:y 5}}))
+
+(deftest object-id
+         (is-enc-dec {:_id (create-object-id)}))
+
+(deftest int
+         (is-enc-dec {:x 1}))
+
+(deftest strings
+         (is-enc-dec {:x "abc"}))
+
+(deftest bool-true
+         (is-enc-dec {:x false}))
+
+(deftest bool-false
+         (is-enc-dec {:x true}))
+
+(deftest binary-test
+         (let [doc {:a (byte-array [(byte 0x05)])}
+               doc0 (decode-doc (encode-doc doc))]
+           (is (java.util.Arrays/equals (:a doc) (:a doc0)))))
 
