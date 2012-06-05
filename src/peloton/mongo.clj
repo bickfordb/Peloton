@@ -2,18 +2,18 @@
   (:import java.io.ByteArrayInputStream)
   (:import java.io.ByteArrayOutputStream)
   (:import java.net.InetSocketAddress)
-  (:import java.nio.ByteOrder)
   (:import java.nio.ByteBuffer)
+  (:import java.nio.ByteOrder)
   (:import java.nio.channels.SelectionKey)
   (:import java.nio.channels.Selector)
   (:import java.nio.channels.SocketChannel)
   (:import java.nio.charset.Charset)
   (:import java.util.Vector)
-  (:use peloton.fut)
-  (:require [peloton.bson :as bson])
-  (:require [peloton.reactor :as reactor])
   (:require [peloton.bits :as bits])
+  (:require [peloton.bson :as bson])
   (:require [peloton.io :as io]) 
+  (:require [peloton.reactor :as reactor])
+  (:use peloton.fut)
   (:use peloton.util))
 
 (def default-port 27017)
@@ -26,15 +26,14 @@
   []
   (swap! last-request-id inc))
 
-(def op-codes 
-  {:reply 1
-   :msg 1000
-   :update 2001
-   :insert 2002
-   :query 2004
-   :getmore 2005
-   :delete 2006
-   :kill-cursors 2007})
+(def op-codes {:reply 1
+               :msg 1000
+               :update 2001
+               :insert 2002
+               :query 2004
+               :getmore 2005
+               :delete 2006
+               :kill-cursors 2007})
 
 (def query-flags {:tailable-cursor? (bit 1)
                  :slave-ok? (bit 2)
@@ -48,6 +47,11 @@
                     :query-failure? (bit 1)
                     :shard-config-state? (bit 2)
                     :await-capable? (bit 3)})
+
+(def update-flags {:upsert? (bit 0)
+                   :multi-update? (bit 1)})
+
+(def delete-flags {:single-remove? (bit 0)})
 
 (defrecord Connection  
   [^SocketChannel socket-channel
@@ -74,17 +78,17 @@
   (loop []
     (cond
       (empty? (.out-buffers c)) (reset! (.state c) nil)
-      :else (let [[^ByteBuffer b f fargs] (first (.out-buffers c))]
+      :else (let [[^ByteBuffer b f] (first (.out-buffers c))]
               (cond 
                 (= (.remaining b) 0) (do 
                                        (.removeElementAt (.out-buffers c) 0)
                                        (when f 
-                                         (apply f true fargs))
+                                         (f true))
                                        (recur))
                 :else (do 
                         (condp = (safe -1 (.write (.socket-channel c) b))
                           -1 (do 
-                               (apply f false fargs)
+                               (when f (f false))
                                (recur))
                           0 (do
                               (io/on-writable (.socket-channel c) send-buffers0! c))
@@ -99,10 +103,8 @@
 (defn write-buffer! 
   [^Connection conn 
    ^ByteBuffer b
-   after 
-   & after-args]
-  
-  (-> conn (.out-buffers) (.add [b after after-args]))
+   after]
+  (-> conn (.out-buffers) (.add [b after]))
   (send-buffers! conn))
 
 (defn write-frame! 
@@ -113,8 +115,10 @@
     (.order buffer ByteOrder/LITTLE_ENDIAN)
     (.putInt buffer (+ (count b) 4))
     (.flip buffer)
-    (write-buffer! c buffer nib))
-  (write-buffer! c (ByteBuffer/wrap b) on-write))
+    (write-buffer! c buffer (fn [succ?] 
+                              (if succ?
+                                (write-buffer! c (ByteBuffer/wrap b) on-write)
+                                (on-write false))))))
 
 (defn put-header! 
   ([bs op-code]
@@ -127,20 +131,34 @@
    (bits/put-le-i32! bs response-to)
    (bits/put-le-i32! bs op-code)))
 
-(def update-flags {:upsert? (bit 0)
-                   :multi-update? (bit 1)})
 
-(defn update-docs!
+(defn update!
   [conn collection-name selector update after & flags]
   (let [flags0 (apply hash-map flags)
         body (ByteArrayOutputStream.)]
-    (put-header! body (:update op-codes))
+    (put-header! body (:update op-codes)) ;header
     (bits/put-le-i32! body 0) ; ZERO
-    (bits/put-cstring! body collection-name)
+    (bits/put-cstring! body collection-name) ; collection name
     (bits/put-le-i32! body (to-flag-bits flags0 update-flags)) ; flags
-    (.write body (bson/encode-doc selector))
-    (.write body (bson/encode-doc update))
+    (.write body (bson/encode-doc selector)) ; the selector document (analog to the WHERE part of a SQL query) 
+    (.write body (bson/encode-doc update)) ; the update statement (analog to the SET part of a SQL query) 
     (write-frame! conn (.toByteArray body) after)))
+
+(def update-fut! (to-fut update! 4))
+
+
+(defn delete! 
+  [conn collection-name selector after & flags]
+  (let [flags0 (apply hash-map flags)
+        body (ByteArrayOutputStream.)]
+    (put-header! body (:delete op-codes)) ;header
+    (bits/put-le-i32! body 0) ; ZERO
+    (bits/put-cstring! body collection-name) ; collection name
+    (bits/put-le-i32! body (to-flag-bits flags0 delete-flags)) ; flags
+    (.write body (bson/encode-doc selector)) ; the selector document (analog to the WHERE part of a SQL query) 
+    (write-frame! conn (.toByteArray body) after)))
+
+(def delete-fut! (to-fut delete! 3))
 
 
 (defn flush! 
@@ -150,18 +168,17 @@
 (defn insert!
   [conn collection-name docs after]
   (if conn
-    (do 
-      (let [body (ByteArrayOutputStream.)
-            docs0 (map bson/add-object-id docs)]
-        (put-header! body (:insert op-codes))
-        (bits/put-le-i32! body 0)
-        (bits/put-cstring! body collection-name)
-        (doseq [doc docs0]
-          (.write body (bson/encode-doc doc)))
-        (write-frame! conn (.toByteArray body) after)))
+    (let [body (ByteArrayOutputStream.)
+          docs0 (map bson/add-object-id docs)]
+      (put-header! body (:insert op-codes))
+      (bits/put-le-i32! body 0)
+      (bits/put-cstring! body collection-name)
+      (doseq [doc docs0]
+        (.write body (bson/encode-doc doc)))
+      (write-frame! conn (.toByteArray body) after))
     (after false)))
 
-(def insert-fut! (to-fut insert!))
+(def insert-fut! (to-fut insert! 3))
 
 (defn parse-packet
   [^ByteBuffer b]
@@ -225,10 +242,13 @@
                    (reduce conj (for [f fieldset] {f 1})))
           after0 (fn [succ?]
                    (if (not succ?)
-                     (after nil)
+                     (do 
+                       (with-stderr 
+                         (println "Failed to write!"))
+                       (after false))
                      (read-packet! conn after)))]
       (put-header! bs (:query op-codes))
-      (bits/put-le-i32! bs 0) ; flags
+      (bits/put-le-i32! bs (to-flag-bits opts0 query-flags)) ; flags
       (bits/put-cstring! bs collection-name) ; name
       (bits/put-le-i32! bs offset) ; offset
       (bits/put-le-i32! bs limit) ; number to return
@@ -260,10 +280,3 @@
 
 (def connect-fut! (to-fut connect!))
 
-;(declare ^:dynamic #^Connection *conn*)
-
-;(defmacro with-conn 
-;  [host port & body]
-;  `(let [g# (fn [c#] 
-;              (binding [*conn* c#] ~@body))]
-;     (connect! ~host ~port g#)))

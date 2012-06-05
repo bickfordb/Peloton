@@ -91,8 +91,8 @@
 (defn to-flag-bits 
   ^long
   [mapping flag-bit-def]
-  (apply bit-or (for [[flag-kw flag-bit] flag-bit-def]
-                  (if (get mapping flag-kw false) flag-bit 0))))
+  (apply bit-or 0 (for [[flag-kw flag-bit] flag-bit-def]
+                    (if (get mapping flag-kw false) flag-bit 0))))
 
 (defn from-flag-bits 
   "Convert a flag bits (encoded in a number) into a mapping of {flagi bool}"

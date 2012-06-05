@@ -3,6 +3,7 @@
   
   This is named \"fut\" instead of \"future\" to avoid conflicting with the built-in future blocking/synchronous future support
   "
+  (:use peloton.util) 
   )
 
 (declare subscribe!)
@@ -32,7 +33,9 @@
     (reset! (.promised fut) promised)
     (doseq [h @(.listeners fut)]
       (apply h promised))
-    (reset! (.promised fut) [])))
+    ; release the listeners
+    (reset! (.listeners fut) [])
+    ))
 
 (defn subscribe!
   "Subscribe to a future"
