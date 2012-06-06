@@ -20,15 +20,9 @@
 
 (set! *warn-on-reflection* true)
 
-(def show-errors-on-close? false)
 (defonce header-pat #"^\s*(\S+)\s*[:]\s*(.+)\s*$")
 (defonce request-line-pat #"^\s*(\S+)\s+(\S+)\s+(\S+)\s*$")
-(defonce BUFFER-SIZE 128)
 (declare on-404)
-
-(defrecord Header 
-  [^String name
-   ^String value])
 
 (defn get-header
   ^String [headers #^String header-name] 
@@ -38,7 +32,6 @@
         (if (.equalsIgnoreCase header-name k) 
           v 
           (recur t)))))) 
-
 
 (defrecord Request
   [method
@@ -62,12 +55,17 @@
    headers
    body])
 
+(def date-fmt (doto 
+                (java.text.SimpleDateFormat. "EEE, dd MMM yyyy HH:mm:ss z")
+                (.setTimeZone (java.util.TimeZone/getTimeZone "GMT"))))
+
 (defn empty-response 
   []
   (Response.
     (atom 200)
     (atom "OK")
-    (atom [])
+    (atom [["Server" (str "peloton/-inf")]
+           ["Date" (.format #^java.text.SimpleDateFormat date-fmt (java.util.Date.))]])
     (atom empty-bytes)))
   
 (defrecord Connection
@@ -317,7 +315,7 @@
             (cond
               (nil? h) (close-conn! conn)
               :else (do 
-                      (swap! (.headers #^Response (.response conn)) concat [h])
+                      (swap! (.headers #^Request (.request conn)) concat [h])
                       (io/read-line! (.socket-channel conn) on-header-line conn))))))
 
 (defn on-request-line
