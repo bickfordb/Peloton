@@ -12,6 +12,7 @@
 (defonce UTF-8 #^Charset (.get (Charset/availableCharsets) "ISO-8859-1"))
 
 (defmacro safe
+  "Execute 'body' and return a 'default' if 'body' raises any Exception"
   [default & body]
   `(try
      ~@body
@@ -20,36 +21,19 @@
 (defn not-nil? [x] (not (nil? x)))
 
 (defn safe-int
+  "Convert a string to an integer or nil"
   [^String s]
   (try
     (when (and (not (nil? s)) (> (count s) 0))
       (Integer. s))
     (catch Exception e nil)))
 
-(definterface ILineParser
-  (^String put [^java.nio.ByteBuffer buffer]))
-
-(deftype LineParser
-  [^ByteArrayOutputStream bs]
-  ILineParser
-  (put [this buffer]
-    (loop []
-      (when (> (.remaining buffer) 0)
-        (let [a-char (int (.get buffer))]
-          (.write bs a-char)
-          (if (== a-char NEWLINE)
-            (let [ret (String. (.toByteArray bs) #^Charset ISO-8859-1)]
-              (.reset bs)
-              ret)
-            (recur)))))))
-
-(defn line-parser
-  []
-  (LineParser. (ByteArrayOutputStream. )))
-
-(defonce empty-bytes (bytes (into-array Byte/TYPE [])))
+(defonce empty-bytes 
+  ;"Get an empty array"
+  (bytes (into-array Byte/TYPE [])))
 
 (defn dump-buffer
+  "Copy a byte buffer to a string, escaping newlines"
   [^ByteBuffer b]
   (let [ret (String. (java.util.Arrays/copyOfRange (.array b) (.position b) (.limit b)) ISO-8859-1)
         ret0 (clojure.string/escape ret {\newline "\\n" \return "\\r"})]
@@ -80,7 +64,7 @@
                       (when (not (= k "")) [k v]))))))
 
 (defn re-find0 
-  "A version of re-find that consistently returns the same type"
+  "A version of re-find that consistently returns a sequence instead of sometimes returning a string or nil."
   [& xs]
   (let [ret (apply re-find xs)]
     (cond
@@ -89,6 +73,8 @@
       :else ret)))
 
 (defn to-flag-bits 
+  "Convert a mapping of flags (keyword -> boolean) and a flag definition mapping (keyword -> number) to a number. 
+  "
   ^long
   [mapping flag-bit-def]
   (apply bit-or 0 (for [[flag-kw flag-bit] flag-bit-def]
@@ -101,16 +87,46 @@
                          (for [[flag-kw flag-bit] flag-bit-def]
                            [flag-kw (> (bit-and flag-bit flag-bits) 0)]))))
 
-
-
 (defmacro with-stderr 
+  "Run body using stderr
+
+  e.g. To print \"hello\" to stderr:
+     (with-stderr
+        (println \"hello\"))
+  "
   [ & body] 
   `(binding [*out* *err*] ~@body))
 
-(defn nib [& xs] nil)
+(defn nib 
+  "Takes all arguments and returns nil.
+
+  This is useful as a callback argument where you don't care about the callback result.
+  "
+  [& xs] nil)
 
 (defn encode-hex
+  "Encode a sequence of numbers (byte-like values) to hex"
   [m]
   (apply str (for [i m] 
                (format "%x" i))))
+
+(defn num-processors 
+  "Get the number of processors"
+  []
+  (-> (Runtime/getRuntime) (.availableProcessors)))
+
+(defmacro spread 
+  "Execute body in N (processors) threads and return the result of each execution in a sequence."
+  [& body]
+  `(let [n# (num-processors)
+         ret# (atom [])
+         f# #(swap! ret# conj (do ~@body))
+         threads# (doall (for [i# (range n#)] (Thread. f#)))]
+     (doseq [^Thread t# threads#]
+       (.setDaemon t# true)
+       (.start t#))
+     (doseq [^Thread t# threads#]
+       (.join t#))
+     @ret#))
+
 

@@ -1,10 +1,13 @@
 (ns peloton.io
-  (:require [peloton.reactor :as reactor])
+  (:import java.io.ByteArrayOutputStream)
+  (:import java.nio.ByteBuffer)
   (:import java.nio.ByteOrder)
-  (:use peloton.util) 
-  (:import java.nio.channels.SocketChannel)
   (:import java.nio.channels.SelectionKey)
-  (:import java.nio.ByteBuffer))
+  (:import java.nio.channels.SocketChannel)
+  (:import java.nio.charset.Charset)
+  (:require [peloton.reactor :as reactor])
+  (:use peloton.util) 
+  )
 
 (def selection-key-flags {:connect? SelectionKey/OP_CONNECT 
                            :read? SelectionKey/OP_READ
@@ -35,25 +38,30 @@
   "Fill up a byte buffer"
   [^SocketChannel socket-channel 
    ^ByteBuffer buffer 
-   on-buffer]
+   on-buffer
+   & args]
   (loop []
      (cond
        (= (.remaining buffer) 0) (on-buffer buffer)
        :else (let [amt (.read socket-channel buffer)] 
                (condp = amt
-                 -1 (on-buffer buffer)
-                 0 (on-readable socket-channel fill-buffer! socket-channel buffer on-buffer)
+                 -1 (apply on-buffer (concat args [buffer]))
+                 0 (apply on-readable socket-channel fill-buffer! socket-channel buffer on-buffer args)
                  (recur))))))
 
 (defn read-to-buf! 
-  [ch ^long n on-buf]
-  (fill-buffer! ch 
-                (ByteBuffer/allocate n) 
-                (fn [^ByteBuffer b]
-                  ; constrain to n:
-                  (cond 
-                    (not (= (.remaining b) 0)) (on-buf nil)
-                    :else (on-buf b)))))
+  [^SocketChannel ch 
+   n 
+   on-buf 
+   & args]
+  (fill-buffer! 
+         ch 
+         (ByteBuffer/allocate n) 
+         (fn [^ByteBuffer b]
+           ; constrain to n:
+           (cond 
+             (not (= (.remaining b) 0)) (apply on-buf (concat args [nil]))
+             :else (apply on-buf (concat args [b]))))))
 
 (defn read-le-i32!
   [^SocketChannel ch
@@ -68,3 +76,32 @@
                 (.flip buffer)
                 (.order buffer ByteOrder/LITTLE_ENDIAN)
                 (on-int (.getInt buffer)))))))
+
+(defn read-line0!
+  [^SocketChannel chan
+   ^ByteBuffer buffer
+   ^ByteArrayOutputStream os
+   after & args]
+  (loop []
+    (condp = (.read chan buffer)
+      ; dead
+      -1 (apply after (concat args [nil]))
+      ; empty:
+      0 (apply on-readable chan read-line0! chan buffer os after args)
+      ; otherwise
+      (do 
+        (.flip buffer)
+        (let [a-byte (long (.get buffer))]
+          (.compact buffer)
+          (.write os (int a-byte))
+          (if (== a-byte 10)
+            (let [s (String. (.toByteArray os) #^Charset UTF-8)
+                  args0 (concat args [s])]
+              (apply after args0))
+            (recur)))))))
+
+(defn read-line!
+  "Read a line from chan and call after with it when done."
+  [^SocketChannel chan
+    after & args]
+   (apply read-line0! chan (ByteBuffer/allocate 1) (ByteArrayOutputStream.) after args))

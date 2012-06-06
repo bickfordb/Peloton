@@ -2,6 +2,7 @@
   (:use peloton.util)
   (:use peloton.reactor)
   (:require peloton.mime)
+  (:require [peloton.io :as io])
   (:use clojure.tools.logging)
   (:import java.io.ByteArrayOutputStream)
   (:import java.util.Vector)
@@ -30,165 +31,73 @@
    ^String value])
 
 (defn get-header
-  ^String
-  [#^java.util.Vector headers 
-   #^String header-name] 
-  (let [n (count headers)]
-    (loop [i 0]
-      (when (< i n)
-        (let [#^Header h (.get headers i)]
-          (if (.equalsIgnoreCase header-name (.name h))
-            (.value h)
-            (recur (inc i))))))))
+  ^String [headers #^String header-name] 
+  (loop [headers headers]
+    (when (not (empty? headers))
+      (let [[[^String k v] & t] headers]
+        (if (.equalsIgnoreCase header-name k) 
+          v 
+          (recur t)))))) 
 
-(definterface IRequest
-  (^String method [])
-  (setMethod [^String m])
 
-  (^String uri [])
-  (setURI [^String uri])
+(defrecord Request
+  [method
+   uri
+   protocol
+   headers
+   body])
 
-  (^java.util.Vector headers [])
+(defn empty-request 
+  [] 
+  (Request. 
+    (atom "GET")
+    (atom "/")
+    (atom "HTTP/1.1")
+    (atom [])
+    (atom empty-bytes)))
 
-  (^String protocol [])
-  (setProtocol [^String s])
-
-  (^bytes body [])
-  (setBody [^bytes bs])
-)
-
-(deftype Request
-  [^String ^{:volatile-mutable true} method
-   ^String ^{:volatile-mutable true} uri
-   ^String ^{:volatile-mutable true} protocol
-   ^java.util.Vector headers
-   ^bytes ^{:volatile-mutable true} body]
-  IRequest
-  (method [this] method)
-  (setMethod [this v] (set! method v))
-  (uri [this] uri)
-  (setURI [this v] (set! uri v))
-  (protocol [this] protocol)
-  (setProtocol [this v] (set! protocol v))
-  (headers [this] headers))
-
-(defn empty-request
-  []
-  (peloton.httpd.Request. 
-    "GET"
-    "/"
-    "HTTP/1.1"
-    (java.util.Vector. )
-    empty-bytes))
-
-(definterface IResponse
-  (^int status [])
-  (setStatus [^int v])
-  
-  (^String message [])
-  (setMessage [^String msg])
-
-  (^java.util.Vector headers [])
-
-  (^bytes body []) 
-  (setBody [^bytes v]))
-
-(deftype Response
-  [^int ^{:volatile-mutable true} status
-   ^String  ^{:volatile-mutable true} message
-   ^java.util.Vector ^{:volatile-mutable true} headers
-   ^bytes  ^{:volatile-mutable true} body]
-  IResponse
-  (setStatus [this s] (set! status s))
-  (status [this] status)
-  
-  (setMessage [this m] (set! message m)) 
-  (message [this] message)
-
-  (headers [this] headers)
-  
-  (setBody [this b] (set! body b))
-  (body [this] body))
+(defrecord Response
+  [status
+   message
+   headers
+   body])
 
 (defn empty-response 
   []
-  (peloton.httpd.Response.
-    200
-    "OK"
-    (Vector. )
-    nil))
-
-(definterface IConnectionState
-  (^peloton.util.LineParser lineParser [])
-  (^peloton.httpd.Request request [])
-  (^peloton.httpd.Response response [])
-  (^java.nio.ByteBuffer inBuffer []) 
-  (^java.util.Vector outBuffers []) 
-  (^java.util.Vector inBytes []) 
-  (^java.nio.channels.SocketChannel socketChannel [])
-  (handler [])
-   
-  (^boolean finished)
-  (setFinished [^boolean v])
-
-  (state)
-  (setState [st])
-
-  (^boolean isSending)
-  (setIsSending [^boolean st])
-  )
-
-(deftype ConnectionState
-  [^java.nio.channels.SocketChannel socket-channel
-   ^peloton.httpd.Request request
-   ^peloton.httpd.Response response
-   ^peloton.util.LineParser line-parser
-   ^java.nio.ByteBuffer in-buffer
-   ^java.util.Vector out-buffers
-   ^boolean ^{:volatile-mutable true} finished 
-   ^boolean ^{:volatile-mutable true} is-sending 
-   ^{:volatile-mutable true} state
-   handler]
-  IConnectionState
-  (request [this] request)
-  (lineParser [this] line-parser)
-  (response [this] response)
-  (inBuffer [this] in-buffer)
-  (outBuffers [this] out-buffers)
-  (socketChannel [this] socket-channel)
-  (handler [this] handler)
-
-  (finished [this] finished)
-  (setFinished [this v] (set! finished v))
-
-  (state [this] state)
-  (setState [this v] (set! state v))
-
-  (isSending [this] is-sending)
-  (setIsSending [this v] (set! is-sending v)))
-
-(defn empty-connection-state 
-  ^ConnectionState
+  (Response.
+    (atom 200)
+    (atom "OK")
+    (atom [])
+    (atom empty-bytes)))
+  
+(defrecord Connection
+  [^SocketChannel socket-channel
+   ^Request request
+   ^Response response
+   out-buffers
+   finished?
+   sending?
+   request-handler])
+ 
+(defn empty-connection 
+  ^Connection
   [socket-channel request-handler] 
-  (peloton.httpd.ConnectionState.
+  (Connection.
     socket-channel
     (empty-request)
     (empty-response)
-    (line-parser)
-    (let [buf (ByteBuffer/allocate 1024)]
-      (.flip buf)
-      buf)
-    (java.util.Vector.)
-    false
-    false
-    0
+    (atom []) 
+    (atom false)
+    (atom false)
     request-handler))
 
-(def ^:dynamic #^ConnectionState *conn*)
-(defn get-connection-state [] (.state *conn*))
-(defn set-connection-state! [s] (.setState *conn* s))
-(defn set-response-status! [st] (.setStatus (.response *conn*) st))
-(defn set-response-message! [m] (.setMessage (.response *conn*) m))
+(defn set-response-status! [^Connection conn ^long st] (reset! (.status #^Response (.response conn)) st))
+(defn set-response-message! [^Connection conn ^String m] (reset! (.message #^Response (.response conn)) m)) 
+
+(defn finished? 
+  "Returns true if the connection is finished"
+  [^Connection conn]
+  @(.finished? conn))
 
 (def uri-pat #"^([^?#]+)(?:[?]([^#]+))?(?:[#](.+))?$")
 
@@ -206,48 +115,25 @@
 
 (defn query-data
   "Load the URL encoded data from the query string in the request line URI"
-  []
-  (let [{:keys [query]} (parse-uri (.uri (.request *conn*)))]
+  [^Connection conn]
+  (let [{:keys [query]} (parse-uri @(.uri #^Request (.request conn)))]
    (parse-qs query)))
 
 (defn post-data
   "Decode the \"URL-encoded\" (usually POST) data from the request body"
-  []
+  [^Connection conn]
   ; FIXME: read the character set in from the request headers
   ; FIXME: handle multi-part requests
-  (-> (safe "" (String. (-> *conn* (.request) (.body)) #^Charset UTF-8)) (parse-qs)))
+  (-> 
+    (safe "" (String. #^bytes @(.body #^Request (.request conn)) #^Charset UTF-8)) 
+    (parse-qs)))
 
 (defn set-response-body!
   "Set the response body"
-  [^String s] 
-  (-> *conn* (.response) (.setBody (.getBytes s #^Charset UTF-8))))
-
-(defn on-selection-key 
-  [stored-connection-state f fargs] 
-  (binding [*conn* stored-connection-state] 
-    (apply f fargs))
-  (.cancel selection-key))
-
-(defn on-socket-write-ready 
-  [f & args]
-  (.register (.socketChannel *conn*) selector SelectionKey/OP_WRITE [on-selection-key *conn* f args]))
-
-(defn on-socket-read-ready 
-  [f & args]
-  (.register (.socketChannel *conn*) selector SelectionKey/OP_READ [on-selection-key *conn* f args]))
-
-(defn fill-in-buffer! 
-  "Try to fill the in buffer
-  
-  Returns
-  the number of bytes read
-  "
-  []
-  (let [b (.inBuffer *conn*)]
-    (.compact b)
-    (let [ret (.read (.socketChannel *conn*) b)]
-      (.flip b)
-      ret)))
+  [^Connection conn ; the connection
+   ^String s ; the body to be encoded as UTF-8
+   ]
+  (reset! (.body #^Response (.response conn)) (.getBytes s #^Charset UTF-8)))
 
 (defn bind!
   [ports backlog]
@@ -258,184 +144,160 @@
     ssc))
 
 (defn add-response-header!
- [name value]
-  (.add (.headers (.response *conn*)) (Header. name value)))
+ [^Connection conn ^String name ^String value]
+  (swap! (.headers #^Response (.response conn)) conj [name value]))
 
 (defn close-conn!
-  []
-  (-> *conn* (.socketChannel) (.close)))
-
-(defn close-with-error!
-  [msg]
-  (when show-errors-on-close?
-    (let [out-buffer-s (apply list (for [[b f] (.outBuffers *conn*)]
-                                     (dump-buffer b)))
-          in-buffer-s (dump-buffer (.inBuffer *conn*))
-          msg0 (format "closing connection on error: %s, in-buffer: %s, out-buffers: %s" 
-                       msg in-buffer-s out-buffer-s)]
-      (error msg0)))
-    (close-conn!))
+  [^Connection conn]
+  (reset! (.finished? conn) true)
+  (let [bs @(.out-buffers conn)]
+    (reset! (.out-buffers conn) [])
+    (doseq [[b f] bs]
+      (when f
+        (f false))))
+  (.close #^SocketChannel (.socket-channel conn)))
 
 (defn socket-flush0!
-  []
-  (-> *conn* (.socketChannel) (.socket) (.getOutputStream) (.flush)))
+  [^Connection conn]
+  (.flush (.getOutputStream (.socket #^SocketChannel (.socket-channel conn)))))
 
 (defn flush-output!
-  []
-  (-> *conn* (.outBuffers) (.add [(ByteBuffer/wrap empty-bytes) socket-flush0!])))
-
-(defn send-buffers0!
-  []
-  (loop []
-    (if (.isEmpty (.outBuffers *conn*))
-      (let [] 
-        (.setIsSending *conn* false)
-        (when (.finished *conn*) 
-          (close-conn!)))
-      (let [[^ByteBuffer buffer f] (.get (.outBuffers *conn*) 0)]
-        (if (> (.remaining buffer) 0)
-          (condp = (safe -1 (.write (.socketChannel *conn*) buffer))
-            -1 (close-with-error! "failed to write body")
-            0 (on-socket-write-ready send-buffers0!)
-            (recur))
-          (let []
-            (.remove (.outBuffers *conn*) 0)
-            (when (not (nil? f)) (f))
-            (recur)))))))
+  [^Connection conn]
+  (swap! (.out-buffers conn) conj [nil (fn [succ?] (socket-flush0! conn))]))
 
 (defn send-buffers!
-  []
-  (when (not (.isSending *conn*))
-    (.setIsSending *conn* true)
-    (send-buffers0!)))
+  [^Connection conn]
+  (loop []
+    (cond 
+      (empty? @(.out-buffers conn)) (do 
+                                      (reset! (.sending? conn) false)
+                                      (when @(.finished? conn)
+                                        (close-conn! conn)))
+      :else (let [[[^ByteBuffer buffer f] & t] @(.out-buffers conn)]
+              (cond 
+                (and buffer (> (.remaining buffer) 0)) (condp 
+                                            = 
+                                            (safe -1 (.write #^SocketChannel (.socket-channel conn) buffer))
+                                            -1 (close-conn! conn) 
+                                            0 (io/on-writable (.socket-channel conn) send-buffers! conn)
+                                            (recur))
+                :else (do 
+                        (swap! (.out-buffers conn) rest)
+                        (when f (f true))
+                        (recur)))))))
+
+(defn write-buffer!
+  "Write a buffer"
+  [^Connection conn
+   ^ByteBuffer buffer
+   f]
+  (when @(.finished? conn)
+    (throw (Exception. "write to a closed connection")))
+  (swap! (.out-buffers conn) concat [[buffer f]])
+  (when (not @(.sending? conn))
+    (reset! (.sending? conn) true)
+    (send-buffers! conn)))
 
 (defn write-bytes! 
-  [^bytes b]
-  (-> *conn* (.outBuffers) (.add [(ByteBuffer/wrap b) nil]))
-  (send-buffers!))
+  [^Connection conn
+   ^bytes b 
+   f ; callable
+   ]
+  (write-buffer! conn (ByteBuffer/wrap b) f))
   
 (defn write-string!
-  [^String s] 
-  (write-bytes! (.getBytes s #^Charset UTF-8)))
+  [^Connection conn
+   ^String s
+   f ; callable
+   ] 
+  (write-bytes! conn (.getBytes s #^Charset UTF-8) f))
 
 (defn send-headers!
-  []
-  (let [xs (transient [])]
-    (conj! xs "HTTP/1.1 ")
-    (conj! xs (-> *conn* (.response) (.status) (str)))
-    (conj! xs " ")
-    (conj! xs (-> *conn* (.response) (.message)))
-    (conj! xs "\r\n")
-    (doseq [#^peloton.httpd.Header h (-> *conn* (.response) (.headers))]
-      (conj! xs (.name h))
-      (conj! xs ": ")
-      (conj! xs (.value h))
-      (conj! xs "\r\n"))
-    (conj! xs "\r\n")
-    (write-string! (apply str (persistent! xs)))))
+  [^Connection conn
+   after]
+  (let [xs (StringBuffer.)
+        ^Response response (.response conn)]
+    (.append xs "HTTP/1.1 ")
+    (.append xs #^long @(.status response))
+    (.append xs " ")
+    (.append xs @(.message response))
+    (.append xs "\r\n")
+    (doseq [[name value] @(.headers response)]
+      (.append xs name)
+      (.append xs ": ")
+      (.append xs value)
+      (.append xs "\r\n"))
+    (.append xs "\r\n")
+    (write-string! conn (.toString xs) after)))
 
 (defn finish-response!
-  []
-  (.setFinished *conn* true)
-  (send-buffers!))
+  [^Connection conn]
+  (reset! (.finished? conn) true)
+  (when (empty? @(.out-buffers conn))
+    (close-conn! conn)))
 
 (defn send-response!
-  []
-  (let [response (-> *conn* (.response))
-        headers (-> response (.headers))
-        body (-> response (.body))]
-    (when (nil? (get-header headers "Content-Length")) 
-      (-> headers (.add (Header. "Content-Length" (-> body (count) (str))))))
-    (send-headers!)
+  [^Connection conn]
+  (let [^Response response (-> conn (.response))
+        headers (.headers response)
+        body @(-> response (.body))]
+    (when (nil? (get-header @headers "Content-Length")) 
+      (swap! headers conj ["Content-Length" (str (count body))]))
+    (send-headers! conn nil)
     (when (not (nil? body))
-      (write-bytes! body))
-    (finish-response!)))
+      (write-bytes! conn body nib))
+    (finish-response! conn)))
 
 (defn start-chunked-response!
-  []
-  (let [response (-> *conn* (.response))
-        headers (-> response (.headers))
-        body (-> response (.body))]
-    (when (not (= (get-header headers "Transfer-Encoding") "chunked"))
-      (-> headers (.add (Header. "Transfer-Encoding" "chunked"))))
-    (send-headers!)))
+  [^Connection conn]
+  (let [^Response response (.response conn)
+        headers (.headers response)
+        body (.body response)]
+    (when (not (= (get-header @headers "Transfer-Encoding") "chunked"))
+      (swap! headers conj ["Transfer-Encoding" "chunked"]))
+    (send-headers! conn nil)))
 
 (defn send-chunk-bytes!
-  [^bytes b]
-  (write-string! (format "%X\r\n" (count b)))
-  (write-bytes! b)
-  (write-string! "\r\n"))
+  [^Connection conn
+   ^bytes b]
+  (write-string! conn (format "%X\r\n" (count b)) nil)
+  (write-bytes! conn b nil)
+  (write-string! conn "\r\n" nil))
 
 (defn send-chunk!
-  [^String s]
-  (send-chunk-bytes! (.getBytes s #^Charset UTF-8)))
+  [^Connection conn
+   ^String s]
+  (send-chunk-bytes! conn (.getBytes s #^Charset UTF-8)))
   
 (defn finish-chunked-response!
-  []
-  (write-string! "0\r\n\r\n")
-  (finish-response!))
+  [^Connection conn]
+  (write-string! conn "0\r\n\r\n" nil)
+  (finish-response! conn))
 
-(defn drain-line!
-  []
-  (.put (.lineParser *conn*) (.inBuffer *conn*)))
-
-(defn write-output-stream! 
-  [^java.io.OutputStream os
-   ^ByteBuffer buf 
-   ^long amt]
-  (let [offset (.position buf) 
-        p (min (.remaining buf) (max amt 0))]
-    (.write os (.array buf) offset p)
-    (.position buf (+ offset p))))
-
-(defn read-body0! 
-  [^long len
-   ^ByteArrayOutputStream bs]
-  (loop []
-    (let [remaining (max 0 (- len (.size bs)))
-          in-buffer (.inBuffer *conn*)]
-      (if (= remaining 0)
-        ; run handler
-        (let [h (.handler *conn*)]
-          (.setState *conn* :processing)
-          (if (nil? h) (on-404) (h)))
-        (if (= 0 (.remaining in-buffer))
-          (condp = (fill-in-buffer!)
-            -1 (close-with-error! "failed to read body")
-            0 (on-socket-read-ready read-body0! len bs)
-            (recur))
-          (let []
-            (write-output-stream! bs in-buffer remaining)
-            (recur)))))))
+(defn on-body
+  [^Connection conn
+   ^ByteBuffer buffer]
+  (cond 
+    (nil? buffer) (close-conn! conn)
+    :else (do 
+            (reset! (.body #^Request (.request conn)) (.array buffer))
+            ((.request-handler conn) conn)
+            )))
 
 (defn read-body! 
-  []
-  (let [content-length (safe-int (get-header (.headers (.request *conn*)) "Content-Length"))]
-    (let [in-content-length (max 0 (if (nil? content-length) 0 content-length))
-          in-bytes (ByteArrayOutputStream. )]
-      (read-body0! in-content-length in-bytes))))
+  [^Connection conn]
+  (let [content-length (safe-int (get-header @(.headers #^Response (.response conn)) "Content-Lenght"))
+        content-length0 (if (nil? content-length) 0 content-length)]
+    (io/read-to-buf! 
+      (.socket-channel conn) 
+      content-length0 
+      on-body 
+      conn)))
 
 (defn parse-header-line 
   [^String line]
   (let [m (re-find header-pat line)]
     (when m [(get m 1) (get m 2)])))
-
-(defn read-header!
-  []
-  (loop [line (drain-line!)]
-    (cond
-      (nil? line) (condp = (fill-in-buffer!)
-                    -1 (close-with-error! "cant read header")
-                    0 (on-socket-read-ready read-header!)
-                    (recur (drain-line!)))
-      (= line "\r\n") (read-body!) ; "\r\n"
-      :else (let [kv (parse-header-line line)
-                  [k v] kv]
-              (if (nil? kv) 
-                (close-with-error! "invalid header") ; close on invalid header
-                (let []
-                  (.add (.headers (.request *conn*)) (Header. k v))
-                  (recur (drain-line!))))))))
 
 (defn parse-request-line
   [^String line] 
@@ -445,67 +307,70 @@
        :uri (get m 2)
        :protocol (get m 3)})))
 
-(defn process-request-line!
-  [^String request-line]
-  (let [p (parse-request-line request-line)]
-    (if (nil? p)
-      (close-with-error! "couldn't parse request line") ; couldn't parse request line
-      (let []
-        (doto (.request *conn*)
-          (.setURI (:uri p))
-          (.setMethod (:method p))
-          (.setProtocol (:protocol p)))
-        (read-header!)))))
+(defn on-header-line
+  [^Connection conn
+   ^String header-line]
+  (cond
+    (nil? header-line) (close-conn! conn)
+    (= "\r\n" header-line) (read-body! conn)
+    :else (let [h (parse-header-line header-line)]
+            (cond
+              (nil? h) (close-conn! conn)
+              :else (do 
+                      (swap! (.headers #^Response (.response conn)) concat [h])
+                      (io/read-line! (.socket-channel conn) on-header-line conn))))))
 
-(defn read-request-line!
-  []
-  (loop []
-    (let [line (drain-line!)]
-      (if (nil? line)
-        (condp = (fill-in-buffer!)
-          -1 (close-with-error! "couldnt fill in-buffer for request line")
-          0 (on-socket-read-ready read-request-line!)
-          (recur))
-        (process-request-line! line)))))
+(defn on-request-line
+  [^Connection conn
+   ^String line]
+   (cond 
+     (nil? line) (close-conn! conn)
+     :else (let [parts (parse-request-line line)
+                 ^Request request (.request conn)]
+             (cond
+               (nil? parts) (close-conn! conn)
+               :else (do 
+                       (reset! (.uri request) (:uri parts))
+                       (reset! (.method request) (:method parts))
+                       (reset! (.protocol request) (:protocol parts))
+                       (io/read-line! (.socket-channel conn) on-header-line conn))))))
 
 (defn on-accept 
   [request-handler] 
   (let [^ServerSocketChannel ssc (.channel selection-key)
         ^SocketChannel socket-channel (.accept ssc)]
     (when (not (nil? socket-channel))
-      (let [socket (.socket socket-channel)]
+      (let [socket (.socket socket-channel)
+            conn (empty-connection socket-channel request-handler)]
         (.setTcpNoDelay socket false)
         (.setSoLinger socket false 0)
         (.setKeepAlive socket true)
-        (.setReuseAddress socket true))
-      (.configureBlocking socket-channel false)
-      (binding [*conn* (empty-connection-state socket-channel request-handler)]
-        (read-request-line!)))))
+        (.setReuseAddress socket true)
+        (.configureBlocking socket-channel false)
+        (io/read-line! socket-channel on-request-line conn)))))
 
 (defn on-404
-  []
-  (set-response-status! 404)  
-  (set-response-message! "Not Found")  
-  (add-response-header! "Content-Type" "text/html")
-  (set-response-body! "<html><h1>404 Not Found</h1></html>")
-  (send-response!))
-
-
+  [^Connection conn]
+  (set-response-status! conn 404)  
+  (set-response-message! conn "Not Found")  
+  (add-response-header! conn "Content-Type" "text/html")
+  (set-response-body! conn "<html><h1>404 Not Found</h1></html>")
+  (send-response! conn))
 
 (defn with-routes
   [routes]
-  #(let [request (.request *conn*)
-          uri-info (parse-uri (.uri request))
+  #(let [^Request request (.request #^Connection %)
+          uri-info (parse-uri @(.uri request))
           {:keys [path]} uri-info]
       (loop [routes0 routes]
         (if (empty? routes0)
-          (on-404)
+          (on-404 %)
           (let [[[pat-method pat-uri handler] & t] routes0]
             (if (or (= pat-method :any) 
-                    (= (name pat-method) (.method request)))
+                    (= (name pat-method) @(.method request)))
               (let [[match & match-args] (re-find0 pat-uri path)]
                 (if match 
-                  (apply handler match-args)
+                  (apply handler % match-args)
                   (recur t)))
               (recur t)))))))
 
@@ -515,36 +380,28 @@
    handler]
   (.register server-socket-channel selector SelectionKey/OP_ACCEPT [on-accept handler]))
 
-(defmacro later-with-conn!
-  "Run this block seconds later with the same connection"
-  [seconds & xs]
-  `(let [conn# *conn*]
-     (later ~seconds
-            (binding [*conn* conn#] ~@xs))))
-
 (defn serve!
   [opts 
    & routes]
-  (let [{:keys [listen-backlog num-threads ports]} opts
-        channel (bind! ports listen-backlog)
-        f (fn []
-            (with-reactor 
-              (listen! channel (with-routes routes))
-              (react)))
-        threads (doseq [i (range num-threads)] (doto (Thread. f) (.start)))] 
-    (doseq [^Thread t threads] (.join t))))
+  (let [{:keys [listen-backlog ports]} opts
+        channel (bind! ports listen-backlog)]
+      (spread 
+        (with-reactor 
+          (listen! channel (with-routes routes))
+          (react)))))
 
 (defn write-file-channel!
-  [^FileChannel channel 
+  [^Connection conn
+   ^FileChannel channel 
    offset 
    len]
   (loop [offset (max offset 0)
          len (max len 0)]
     (if (> len 0)
-      (let [amt (safe -1 (.transferTo channel offset len (.socketChannel *conn*)))]
+      (let [amt (safe -1 (.transferTo channel offset len (.socket-channel conn)))]
         (cond
-          (< amt 0) (close-with-error! "failed to write file")
-          (= amt 0) (on-socket-write-ready write-file-channel! offset len)
+          (< amt 0) (close-conn! conn)
+          (= amt 0) (io/on-writable (.socket-channel conn) write-file-channel! conn channel offset len)
           :else (recur (+ offset amt) (- len amt))))
       (finish-response!))))
 
@@ -561,7 +418,8 @@
   [^String dir & opts]
   (let [opts0 (apply hash-map opts)
         mime-types (get opts0 :mime-types peloton.mime/common-ext-to-mime-types)]
-    (fn [^String path] 
+    (fn [^Connection conn 
+         ^String path] 
       (let [^RandomAccessFile f (safe nil (java.io.RandomAccessFile. (File. (java.io.File. dir) path) "r"))
             ch (when (not-nil? f) (safe nil (.getChannel f)))]
         (if (nil? ch)
@@ -569,24 +427,23 @@
           (let [sz (safe 0 (.length f))
                 len sz
                 content-type "application/octet-stream"
-                range-header (get-header (-> *conn* (.request) (.headers)) "Range")
+                range-header (get-header @(.headers #^Request (.request conn)) "Range")
                 {:keys [range-start-byte range-end-byte]} (parse-range-header range-header)
                 offset (if (nil? range-start-byte) 0 range-start-byte)
                 len (if (nil? range-end-byte) 
                       (- sz offset) 
                       (+ (inc (- range-end-byte range-start-byte))))
-                after-headers (fn [] (write-file-channel! ch offset len))]
-            (add-response-header! "Content-Type" (peloton.mime/guess-mime-type-of-path path mime-types))
-            (add-response-header! "Accept-Ranges" "bytes")
-            (add-response-header! "Content-Length" len)
+                after-headers (fn [] (write-file-channel! conn ch offset len))]
+            (add-response-header! conn "Content-Type" (peloton.mime/guess-mime-type-of-path path mime-types))
+            (add-response-header! conn "Accept-Ranges" "bytes")
+            (add-response-header! conn "Content-Length" len)
             (when (or (> offset 0)
                       (not (= len sz)))
-              (set-response-status! 206)
-              (set-response-message! "Partial Content")
+              (set-response-status! conn 206)
+              (set-response-message! conn "Partial Content")
               (let [start-byte offset
                     end-byte (dec (+ offset len))]
-                (add-response-header! "Content-Range" (format "%d-%d/%d" start-byte end-byte sz))))
-            (send-headers!)
-            (.add (.outBuffers *conn*) [(ByteBuffer/wrap empty-bytes) after-headers])
-            (send-buffers!)))))))
+                (add-response-header! conn "Content-Range" (format "%d-%d/%d" start-byte end-byte sz))))
+            (send-headers! conn nil)
+            (write-buffer! conn (ByteBuffer/wrap empty-bytes) after-headers)))))))
 
