@@ -3,6 +3,7 @@
   (:use peloton.reactor)
   (:require peloton.mime)
   (:require [peloton.io :as io])
+  (:require [peloton.reactor :as reactor])
   (:use clojure.tools.logging)
   (:import java.io.ByteArrayOutputStream)
   (:import java.util.Vector)
@@ -177,7 +178,7 @@
                                             = 
                                             (safe -1 (.write #^SocketChannel (.socket-channel conn) buffer))
                                             -1 (close-conn! conn) 
-                                            0 (io/on-writable (.socket-channel conn) send-buffers! conn)
+                                            0 (reactor/on-writable-once! (.socket-channel conn) send-buffers! conn)
                                             (recur))
                 :else (do 
                         (swap! (.out-buffers conn) rest)
@@ -279,18 +280,13 @@
     (nil? buffer) (close-conn! conn)
     :else (do 
             (reset! (.body #^Request (.request conn)) (.array buffer))
-            ((.request-handler conn) conn)
-            )))
+            ((.request-handler conn) conn))))
 
 (defn read-body! 
   [^Connection conn]
-  (let [content-length (safe-int (get-header @(.headers #^Response (.response conn)) "Content-Lenght"))
+  (let [content-length (safe-int (get-header @(.headers #^Response (.response conn)) "Content-Length"))
         content-length0 (if (nil? content-length) 0 content-length)]
-    (io/read-to-buf! 
-      (.socket-channel conn) 
-      content-length0 
-      on-body 
-      conn)))
+    (io/read-to-buf! (.socket-channel conn) content-length0 on-body conn)))
 
 (defn parse-header-line 
   [^String line]
@@ -321,31 +317,32 @@
 (defn on-request-line
   [^Connection conn
    ^String line]
-   (cond 
-     (nil? line) (close-conn! conn)
-     :else (let [parts (parse-request-line line)
-                 ^Request request (.request conn)]
-             (cond
-               (nil? parts) (close-conn! conn)
-               :else (do 
-                       (reset! (.uri request) (:uri parts))
-                       (reset! (.method request) (:method parts))
-                       (reset! (.protocol request) (:protocol parts))
-                       (io/read-line! (.socket-channel conn) on-header-line conn))))))
+  (cond 
+    (nil? line) (close-conn! conn)
+    :else (let [parts (parse-request-line line)
+                ^Request request (.request conn)]
+            (cond
+              (nil? parts) (close-conn! conn)
+              :else (do 
+                      (reset! (.uri request) (:uri parts))
+                      (reset! (.method request) (:method parts))
+                      (reset! (.protocol request) (:protocol parts))
+                      (io/read-line! (.socket-channel conn) on-header-line conn))))))
 
 (defn on-accept 
   [request-handler] 
-  (let [^ServerSocketChannel ssc (.channel selection-key)
-        ^SocketChannel socket-channel (.accept ssc)]
-    (when (not (nil? socket-channel))
-      (let [socket (.socket socket-channel)
-            conn (empty-connection socket-channel request-handler)]
-        (.setTcpNoDelay socket false)
-        (.setSoLinger socket false 0)
-        (.setKeepAlive socket true)
-        (.setReuseAddress socket true)
-        (.configureBlocking socket-channel false)
-        (io/read-line! socket-channel on-request-line conn)))))
+  (let [^ServerSocketChannel server-socket-chan (.channel selection-key)]
+    (loop [^SocketChannel socket-channel (.accept server-socket-chan)]
+      (when socket-channel
+        (let [socket (.socket socket-channel)
+              conn (empty-connection socket-channel request-handler)]
+          (.setTcpNoDelay socket false)
+          (.setSoLinger socket false 0)
+          (.setKeepAlive socket true)
+          (.setReuseAddress socket true)
+          (.configureBlocking socket-channel false)
+          (io/read-line! socket-channel on-request-line conn))
+          (recur (.accept server-socket-chan))))))
 
 (defn on-404
   [^Connection conn]
@@ -376,7 +373,7 @@
   "Listen for connections"
   [^ServerSocketChannel server-socket-channel 
    handler]
-  (.register server-socket-channel selector SelectionKey/OP_ACCEPT [on-accept handler]))
+  (reactor/on-acceptable! server-socket-channel on-accept handler))
 
 (defn serve!
   [opts 
@@ -399,7 +396,7 @@
       (let [amt (safe -1 (.transferTo channel offset len (.socket-channel conn)))]
         (cond
           (< amt 0) (close-conn! conn)
-          (= amt 0) (io/on-writable (.socket-channel conn) write-file-channel! conn channel offset len)
+          (= amt 0) (reactor/on-writable-once! (.socket-channel conn) write-file-channel! conn channel offset len)
           :else (recur (+ offset amt) (- len amt))))
       (finish-response!))))
 

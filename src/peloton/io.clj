@@ -8,31 +8,6 @@
   (:require [peloton.reactor :as reactor])
   (:use peloton.util) 
   )
-
-(def selection-key-flags {:connect? SelectionKey/OP_CONNECT 
-                           :read? SelectionKey/OP_READ
-                           :write? SelectionKey/OP_WRITE
-                           :accept? SelectionKey/OP_ACCEPT})
-
-(defn reg
-  [socket-channel op f & fargs]
-  (reactor/later 0
-                 (let [g (fn [] 
-                           (apply f fargs)
-                           (.cancel reactor/selection-key))]
-                   (reactor/register socket-channel op g))))
-
-(defn on-readable 
-  [^SocketChannel socket-channel f & fargs]
-  (apply reg socket-channel SelectionKey/OP_READ f fargs))
-
-(defn on-writable 
-  [^SocketChannel socket-channel f & fargs]
-  (apply reg socket-channel SelectionKey/OP_WRITE f fargs))
-
-(defn on-connected
-  [^SocketChannel socket-channel f & fargs]
-  (apply reg socket-channel SelectionKey/OP_CONNECT f fargs))
   
 (defn fill-buffer!
   "Fill up a byte buffer"
@@ -46,7 +21,7 @@
        :else (let [amt (.read socket-channel buffer)] 
                (condp = amt
                  -1 (apply on-buffer (concat args [buffer]))
-                 0 (apply on-readable socket-channel fill-buffer! socket-channel buffer on-buffer args)
+                 0 (apply reactor/on-readable-once! socket-channel fill-buffer! socket-channel buffer on-buffer args)
                  (recur))))))
 
 (defn read-to-buf! 
@@ -87,7 +62,7 @@
       ; dead
       -1 (apply after (concat args [nil]))
       ; empty:
-      0 (apply on-readable chan read-line0! chan buffer os after args)
+      0 (apply reactor/on-readable-once! chan read-line0! chan buffer os after args)
       ; otherwise
       (do 
         (.flip buffer)
