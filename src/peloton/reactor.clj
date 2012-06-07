@@ -58,14 +58,15 @@
     (.select selector 1000) 
     (run-pending-events)
     (doseq [s-key (.selectedKeys selector)]
-      (binding [selection-key s-key]
-        (let [attachment (or (.attachment s-key) {})
-              ready (.readyOps s-key)]
-          (doseq [bit op-bits]
-            (when (= (bit-and ready bit) bit)
-              (let [[f xs] (get attachment bit)]
-                (when f
-                  (ignore (apply f xs)))))))))))
+      (when (and s-key (.isValid s-key))
+        (binding [selection-key s-key]
+          (let [attachment (or (.attachment s-key) {})
+                ^int ready (.readyOps s-key)]
+            (doseq [bit op-bits]
+              (when (= (bit-and ready bit) bit)
+                (let [[f xs] (get attachment bit)]
+                  (when f
+                    (ignore (apply f xs))))))))))))
 
 (defn register!
   [^SelectableChannel chan s-key f & fargs]
@@ -124,3 +125,10 @@
 (def on-writable-once! (on-op-once! SelectionKey/OP_WRITE))
 (def on-connectable-once! (on-op-once! SelectionKey/OP_CONNECT))
 
+(defn reset-chan! 
+  [^SelectableChannel chan]
+  (let [selection-key (.keyFor chan selector)]
+    (when selection-key 
+      (.attach selection-key nil)
+      (when (.isValid selection-key)
+       (.cancel selection-key)))))

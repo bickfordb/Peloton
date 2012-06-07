@@ -2,6 +2,7 @@
   (:use peloton.util)
   (:use peloton.reactor)
   (:require peloton.mime)
+  (:require [hiccup.core :as hiccup])
   (:require [peloton.io :as io])
   (:require [peloton.reactor :as reactor])
   (:use clojure.tools.logging)
@@ -23,7 +24,7 @@
 
 (defonce header-pat #"^\s*(\S+)\s*[:]\s*(.+)\s*$")
 (defonce request-line-pat #"^\s*(\S+)\s+(\S+)\s+(\S+)\s*$")
-(declare on-404)
+(declare not-found!)
 
 (defn get-header
   ^String [headers #^String header-name] 
@@ -65,7 +66,7 @@
   (Response.
     (atom 200)
     (atom "OK")
-    (atom [["Server" (str "peloton/-inf")]
+    (atom [["Server" "peloton/-inf"]
            ["Date" (.format #^java.text.SimpleDateFormat date-fmt (java.util.Date.))]])
     (atom empty-bytes)))
   
@@ -123,9 +124,14 @@
   [^Connection conn]
   ; FIXME: read the character set in from the request headers
   ; FIXME: handle multi-part requests
-  (-> 
-    (safe "" (String. #^bytes @(.body #^Request (.request conn)) #^Charset UTF-8)) 
-    (parse-qs)))
+  (let [^bytes body @(.body #^Request (.request conn))
+        s (safe "" (String. body #^Charset UTF-8))
+        data (parse-qs s)]
+    data))
+
+(defn post-data-map
+  [conn]
+  (apply hash-map (apply concat (post-data conn))))
 
 (defn set-response-body!
   "Set the response body"
@@ -133,6 +139,8 @@
    ^String s ; the body to be encoded as UTF-8
    ]
   (reset! (.body #^Response (.response conn)) (.getBytes s #^Charset UTF-8)))
+
+
 
 (defn bind!
   [ports backlog]
@@ -144,7 +152,30 @@
 
 (defn add-response-header!
  [^Connection conn ^String name ^String value]
-  (swap! (.headers #^Response (.response conn)) conj [name value]))
+  (swap! (.headers #^Response (.response conn)) concat [[name value]]))
+
+(defn set-response-header! 
+  "Set a response header"
+  [^Connection conn 
+   ^String header-name 
+   ^String header-value]
+  (swap! (.headers #^Response (.response conn))
+         (fn [hs] (concat
+                    (filter (fn [[^String h v]] (not (.equalsIgnoreCase h header-name))) hs)
+                    [[header-name header-value]]))))
+
+(defn set-content-type! 
+  [conn content-type] 
+  (set-response-header! conn "Content-Type" content-type))
+
+(defn set-content-type-html!
+  [conn] 
+  (set-response-header! conn "Content-Type" "text/html; charset=utf8"))
+
+(defn set-content-type-json!
+  [conn] 
+  (set-response-header! conn "Content-Type" "application/json"))
+
 
 (defn close-conn!
   [^Connection conn]
@@ -282,9 +313,14 @@
             (reset! (.body #^Request (.request conn)) (.array buffer))
             ((.request-handler conn) conn))))
 
+(defn request-content-length
+  "Get the content length of the request"
+  [^Connection conn]
+  (safe-int (get-header @(.headers #^Request (.request conn)) "Content-Length")))
+
 (defn read-body! 
   [^Connection conn]
-  (let [content-length (safe-int (get-header @(.headers #^Response (.response conn)) "Content-Length"))
+  (let [content-length (request-content-length conn)
         content-length0 (if (nil? content-length) 0 content-length)]
     (io/read-to-buf! (.socket-channel conn) content-length0 on-body conn)))
 
@@ -344,13 +380,26 @@
           (io/read-line! socket-channel on-request-line conn))
           (recur (.accept server-socket-chan))))))
 
-(defn on-404
+
+(defmacro send-html!
+  [conn & body]
+  `(let [conn# ~conn]
+     (set-content-type-html! conn#)
+     (set-response-body! conn# (hiccup/html ~@body))
+     (send-response! conn#)))
+
+(defn not-found!
   [^Connection conn]
   (set-response-status! conn 404)  
   (set-response-message! conn "Not Found")  
-  (add-response-header! conn "Content-Type" "text/html")
-  (set-response-body! conn "<html><h1>404 Not Found</h1></html>")
-  (send-response! conn))
+  (send-html! conn [:body [:h1 "404 Not Found"]]))
+
+(defn see-other! 
+  [conn uri]
+  (set-response-header! conn "Location" uri)
+  (set-response-status! conn 303)
+  (set-response-message! conn "See Other")
+  (send-html! conn [:body [:h1 "303 See Other"]]))
 
 (defn with-routes
   [routes]
@@ -359,7 +408,7 @@
           {:keys [path]} uri-info]
       (loop [routes0 routes]
         (if (empty? routes0)
-          (on-404 %)
+          (not-found! %)
           (let [[[pat-method pat-uri handler] & t] routes0]
             (if (or (= pat-method :any) 
                     (= (name pat-method) @(.method request)))
@@ -378,7 +427,8 @@
 (defn serve!
   [opts 
    & routes]
-  (let [{:keys [listen-backlog ports]} opts
+  (let [{:keys [listen-backlog ports] 
+         :or {listen-backlog 100 ports [8080]}} opts
         channel (bind! ports listen-backlog)]
       (spread 
         (with-reactor 
@@ -418,7 +468,7 @@
       (let [^RandomAccessFile f (safe nil (java.io.RandomAccessFile. (File. (java.io.File. dir) path) "r"))
             ch (when (not-nil? f) (safe nil (.getChannel f)))]
         (if (nil? ch)
-          (on-404)
+          (not-found! conn)
           (let [sz (safe 0 (.length f))
                 len sz
                 content-type "application/octet-stream"
@@ -441,4 +491,7 @@
                 (add-response-header! conn "Content-Range" (format "%d-%d/%d" start-byte end-byte sz))))
             (send-headers! conn nil)
             (write-buffer! conn (ByteBuffer/wrap empty-bytes) after-headers)))))))
+
+
+
 

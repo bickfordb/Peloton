@@ -91,7 +91,7 @@
                                (when f (f false))
                                (recur))
                           0 (do
-                              (io/on-writable (.socket-channel c) send-buffers0! c))
+                              (reactor/on-writable-once! (.socket-channel c) send-buffers0! c))
                           (recur))))))))
 
 (defn send-buffers! 
@@ -274,9 +274,14 @@
       (.setSoLinger false 0)
       (.setSoTimeout 0)
       (.setTcpNoDelay false))
-
-    (io/on-connected socket-channel on-connect f)
+    (reactor/on-connectable-once! socket-channel on-connect f)
     (.connect socket-channel addr)))
 
 (def connect-fut! (to-fut connect!))
+
+(defn close! 
+  [^Connection c]
+  (.close (.socket-channel c))
+  (reactor/reset-chan! (.socket-channel c))
+  )
 

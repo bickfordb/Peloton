@@ -61,7 +61,7 @@
                     (let [[l r] (clojure.string/split p eq-pat 2)
                           k (if l (java.net.URLDecoder/decode l) "")
                           v (if r (java.net.URLDecoder/decode r) "")]
-                      (when (not (= k "")) [k v]))))))
+                      (when (not (= k "")) [(keyword k) v]))))))
 
 (defn re-find0 
   "A version of re-find that consistently returns a sequence instead of sometimes returning a string or nil."
