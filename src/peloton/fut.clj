@@ -3,71 +3,171 @@
   
   This is named \"fut\" instead of \"future\" to avoid conflicting with the built-in future blocking/synchronous future support
   "
+  (:require clojure.walk)
   (:use peloton.util) 
   )
 
-(declare subscribe!)
+(defprotocol IFut
+  (bind! [fut listener] [fut listener context])
+  (unbind! [fut listener])
+  ; from IFn
+  (invoke [fut a-val]))
 
-(defrecord Fut 
+;
+;(defrecord ContinuousCell
+; [^clojure.lang.Atom latest
+;  ^clojure.lang.Atom done
+;  ^clojure.lang.Atom listeners]
+;  IDataFlow
+;  (bind [this listener]
+;    (swap! listeners conj listener)
+;    (when @done
+;      (listener @latest)))
+;  (unbind [this listener]
+;    (swap! listeners (fn [xs] (filter (not (= % listener)) xs))))
+;  clojuare.lang.IFn
+;  (invoke [this val] 
+;    (reset! done true)
+;    (reset! latest val)
+;    (doseq [l listeners]
+;      (l val))))
+;
+;(defn continuous
+;  []
+;  (ContinuousCell. (atom nil) (atom false) (atom [])))
+
+; a cell which only fires once.
+;
+(defrecord OneShotCell
   [^clojure.lang.Atom promised
    ^clojure.lang.Atom done
    ^clojure.lang.Atom listeners]
+  IFut
+  (bind! [this listener]
+    (if @done
+      (listener @promised)
+      (swap! listeners conj [listener nil]))
+    nil)
+  (bind! [this listener context]
+    (if @done
+      (listener context @promised)
+      (swap! listeners conj [listener context]))
+    nil)
+  (unbind! [this listener] 
+    (if @done
+      (listener @promised)
+      (swap! listeners conj listener))
+    nil)
   clojure.lang.IFn
-  (invoke [this] this)
-  (invoke [this & xs] (doseq [f xs] (subscribe! this f))))
+  (invoke [this val] 
+    (when (not @done)
+      (reset! promised val)
+      (reset! done true)
+      ; send the message
+      (doseq [[listener ctx] @listeners]
+        (if ctx
+          (listener ctx val)
+          (listener val)))
+      ; clear existing listeners
+      (reset! listeners [])
+      nil)))
+
+(defn fut
+  [] 
+  (OneShotCell. (atom nil) (atom false) (atom [])))
+
+;(defmacro >>= 
+;  "
+;  (>>= 
+;      (connect host port) 
+;      (query selector) 
+;      (fn [result] (println result)))
+;  "
+;  [h & t]
+;  `(let [h# ~h]
+;      (loop [
 
 (defn fut 
   "Create a future"
   [] 
-  (Fut. 
+  (OneShotCell. 
     (atom [])
     (atom false)
     (atom [])))
 
-(defn deliver! 
-  "Deliver the result to a future"
-  [^Fut fut 
-   & promised]
-  (when (not @(.done fut))
-    (reset! (.done fut) true)
-    (reset! (.promised fut) promised)
-    (doseq [h @(.listeners fut)]
-      (apply h promised))
-    ; release the listeners
-    (reset! (.listeners fut) [])
-    ))
-
-(defn subscribe!
-  "Subscribe to a future"
-  [^Fut fut 
-   ^clojure.lang.IFn f]
-  (if @(.done fut)
-    (apply f @(.promised fut))
-    (swap! (.listeners fut) conj f)))
 
 (defn fut? 
   "Check to see if x is a future"
   [x] 
-  (instance? Fut x))
+  (satisfies? IFut x))
 
-(defmacro dofut0
-  [bindings body]
-  (if (empty? bindings)
-    `(do ~@body)
-    (let [sym (first bindings)
-          fut (second bindings)
-          t (nthrest bindings 2)]
-      `(let [f# ~fut]
-         (if (fut? f#)
-           (subscribe! f#
-                       (fn [ & xs# ] 
-                         (let [~sym xs#]
-                           `~(dofut0 ~t ~body)
-                           )))
-           (let [~sym f#] 
-             `~(dofut0 ~t ~body)))))))
+;(defmacro dofut0
+;  [bindings body]
+;  (if (empty? bindings)
+;    `(do ~@body)
+;    (let [sym (first bindings)
+;          the-fut (second bindings)
+;          t (nthrest bindings 2)]
+;      `(let [f# ~the-fut
+;             g# (fut)]
+;         (if (fut? f#)
+;           (.bind! f#
+;                   (fn [xs#] 
+;                     (let [~sym xs#]
+;                       (g# (do `~(dofut0 ~t ~body)))
+;                       )))
+;           (let [~sym f#] 
+;             (g# (do `~(dofut0 ~t (do ~@body)))))
+;           )
+;         g#
+;         ))))
+;
+;
+;
+;(defmacro dofut
+;  [fut-bindings & body]
+;  `(dofut0 ~fut-bindings ~body))
 
-(defmacro dofut
+(defn to-fut
+  "Convert a function which takes a \"finish\" callback to a future" 
+  ([f]
+   (fn [ & xs] 
+     (let [^Fut a-fut (fut)
+           g (fn [y & ys] (if ys 
+                            (a-fut (conj y ys))
+                            (a-fut y)))]
+           (apply f (concat xs [g]))
+           a-fut)))
+  ([f arg-idx]
+   (fn [ & xs] 
+    (let [^Fut a-fut (fut)
+          g (fn [y & ys] (if ys
+                           (a-fut (conj y ys))
+                           (a-fut y)))]
+      (apply f (concat (take arg-idx xs) [g] (drop arg-idx xs)))
+      a-fut))))
+
+(defn do-fut-inner-body
+  [outer-fut body]
+  (list outer-fut (cons `do body)))
+
+(defn do-fut-inner-bind 
+  [bind-to bind-from-fut on-fut]
+  (let [bind-from-fut0 (gensym "bind-from-fut-")]
+    (list 'let [bind-from-fut0 bind-from-fut]
+          (list 'if (list `fut? bind-from-fut0)
+                (list '.bind! bind-from-fut0 (list 'fn [bind-to] on-fut))
+                (list `let [bind-to bind-from-fut0] on-fut)))))
+
+(defn do-fut-inner 
+  [bindings outer-fut body]
+    (cond 
+      (empty? bindings) (do-fut-inner-body outer-fut body)
+      :else (let [[bind-to bind-from-fut & tail] bindings
+                  rec (do-fut-inner tail outer-fut body)]
+              (do-fut-inner-bind bind-to bind-from-fut rec))))
+
+(defmacro dofut 
   "Execute a body when a sequence of futures are ready.
 
   Each binding will be executed when the future from the previous binding is delivered.
@@ -77,7 +177,7 @@
     (defn create-user ^Fut [first last] ...) 
     (defn create-business ^Fut [] ...) 
     (defn create-review ^Fut [user-id business-id rating comment] ...) 
-
+  
     (dofut [[user-id] (create-user \"Brandon\" \"Bickford\")
               [business-id] (create-business \"Gary Danko\")
               [review-id] (when (and user-id business-id) 
@@ -89,23 +189,97 @@
         (println \"business:\" business-id)
         (println \"review:\" review-id))
   "
-  [fut-bindings & body]
-  `(dofut0 ~fut-bindings ~body))
 
-(defn to-fut
-  "Convert a function which takes a \"finish\" callback to a future" 
-  ([f]
-  (fn [ & xs] 
-    (let [^Fut a-fut (fut)
-          g (fn [& ys] (apply deliver! a-fut ys))]
-      (apply f (concat xs [g]))
-      a-fut)))
-  ([f arg-idx]
-   (fn [ & xs] 
-    (let [^Fut a-fut (fut)
-          g (fn [& ys] (apply deliver! a-fut ys))]
-      (apply f (concat (take arg-idx xs) [g] (drop arg-idx xs)))
-      a-fut))))
+  [bindings & body]
+  (let [ret-fut-sym (gensym "retfut")
+        dofut-body (do-fut-inner bindings ret-fut-sym body)]
+    (list 'let [ret-fut-sym (list `fut)] 
+          dofut-body 
+          ret-fut-sym)))
+
+;(defn <-
+;  "Convert a function to a future function. 
+;  
+;  (<- connect! host port) 
+;  (<- (connect! host port))
+;
+;  (>>= 
+;    (let [g (<- connect! host port)]
+;      (println @g))
+;  "
+;  [f & xs] 
+;  (let [a (fut)
+;        b (fn [& ys] (apply deliver! a ys))]
+;      (apply f b xs)
+;      a))
+;
+;(defn <<-
+;  [f & xs] 
+;  (let [a (fut)
+;        b (fn [& ys] (apply deliver! a ys))]
+;    (apply f (concat xs [b]))
+;    a))
+;
 
 
+(defn future-ref?
+  [form]
+  (and (symbol? form) 
+       (.startsWith (name form) "?")))
+
+(declare replace-future-ref)
+
+(defn replace-future-ref-list
+  [a-form] 
+  (loop [before () 
+         t a-form]
+    (cond 
+      (empty? t) a-form ; we couldn't find any replacements
+      :else (let [[h & t0] t]
+              (cond 
+                (future-ref? h) (let [bind-to (gensym "fut")
+                                      bind-from (symbol (.substring (name h) 1))
+                                      replaced (list 'dofut [bind-to bind-from]
+                                                     (replace-future-ref-list 
+                                                       (concat before (list bind-to) t0)))]
+                                  replaced)
+                :else (recur (concat before (list h)) t0))))))
+
+(defn replace-future-ref
+  [a-form]
+  (cond 
+    (list? a-form) (replace-future-ref-list a-form)
+   
+    :else a-form))
+
+(defn replace-future-sym
+  [a-sym]
+  (let [bind-to (gensym "fut")
+        bind-from (symbol (.substring (name a-sym) 1))]
+    (list 'dofut [bind-to bind-from] bind-to)))
+
+(defmacro >?
+  [form]
+  (cond 
+    (future-ref? form) (replace-future-sym form) 
+    :else (clojure.walk/postwalk replace-future-ref form)))
+
+(defmacro >>= 
+  "Bind futures together"
+  [h-form & t-form]
+  `(let [h-form0# ~h-form]
+     (if (fut? h-form0#)
+       (.bind! h-form0# (fn [x] (-> x ~t-form)))
+       (-> x ~t-form))))
+
+(defmacro >>
+  "Thread values through function(s) which return futures.
+
+  Usage. (>= (connect) (fn [conn] (query conn {:id 5})) (render-page )))
+  "
+  [h-form t-form]
+  `(let [h-form0# ~h-form]
+     (if (fut? h-form0#)
+       (.bind! h-form0# (fn [x] ~t-form)))
+       ~t-form))
 

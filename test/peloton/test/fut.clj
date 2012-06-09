@@ -8,21 +8,21 @@
          (let [a-fut (fut)
                y (atom nil)]
            (is (nil? @y))
-           (subscribe! a-fut (fn [x] (reset! y x)))
+           (.bind! a-fut (fn [x] (reset! y x)))
            (is (nil? @y))
-           (deliver! a-fut "hello")
+           (a-fut "hello")
            (is (= @y "hello"))))
 
 (deftest dofut-test
   (let [a-fut (fut)
-        a-fut2 (fut)
+       a-fut2 (fut)
         x (atom nil)
         y (atom nil)
         z (atom nil)]
     (is (nil? @y))
     (dofut
-      [[a-val0] a-fut
-       [a-val1] a-fut2
+    [a-val0 a-fut
+       a-val1 a-fut2
        quux 25]
       (reset! x quux)
       (reset! y a-val0)
@@ -30,32 +30,68 @@
     (is (nil? @x))
     (is (nil? @y))
     (is (nil? @z))
-    (deliver! a-fut "hello there")
+    (a-fut "hello there")
     (is (nil? @x))
     (is (nil? @y))
     (is (nil? @z))
-    (deliver! a-fut2 "goodbye")
+    (a-fut2 "goodbye")
     (is (= 25 @x))
     (is (= "hello there" @y))
     (is (= "goodbye" @z))))
 
-(deftest dofut-test2
+(deftest dofut-sequence
          (let [f0 (fut)
                f1 (fut)
                c0 (atom nil)
                c1 (atom nil)]
-           (dofut [[v0] (f0) 
-                     [v1] (do 
-                          (reset! c0 :fired0)
-                          f1)]
-                    (reset! c1 :fired1))
+           (dofut [v0 f0 
+                   v1 (do 
+                        (reset! c0 :fired0)
+                        f1)]
+                  (reset! c1 :fired1))
            (is (nil? @c0 ))
            (is (nil? @c1 ))
-           (deliver! f0 "v0")
+           (f0 "v0")
            (is (nil? @c1 ))
            (is (= @c0 :fired0))
-           (deliver! f1 "v1")
+           (f1 "v1")
            (is (= @c0 :fired0))
-           (is (= @c1 :fired1))
-          ))
+           (is (= @c1 :fired1))))
+
+(deftest alg-test-0
+         (>? 
+           (let [v0 (atom nil)
+                 f0 (fut)]
+             (reset! v0 ?f0)
+             (is (= @v0 nil))
+             (f0 1)
+             (is (= @v0 1)))))
+
+(deftest alg-test-1
+         (let [v0 (atom nil)
+               f0 (fut)
+               f1 (fut)
+               f2 (fut)]
+           (>? 
+              (let [q0 (+ ?f0 ?f1)]
+                (println "q0: " ?q0))
+                ;(reset! v0 ?q0)
+                ;)
+           )))
+
+
+(deftest dofut-test-0
+         (let [a (fut)
+               b (dofut [x a]
+                        (+ 1 x))
+               cell (atom nil)]
+           (dofut [y b]
+                  (reset! cell y))
+           
+           (is (= @cell nil))
+           (a 1)
+           (is (= @cell 2))))
+          
+
+
 
