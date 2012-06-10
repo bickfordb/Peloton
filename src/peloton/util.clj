@@ -129,4 +129,9 @@
        (.join t#))
      @ret#))
 
+(defmacro ignore-and-print
+  [& body]
+  `(try
+     ~@body
+     (catch Exception e# (.printStackTrace e#))))
 

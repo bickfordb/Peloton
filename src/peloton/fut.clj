@@ -101,37 +101,10 @@
   [x] 
   (satisfies? IFut x))
 
-;(defmacro dofut0
-;  [bindings body]
-;  (if (empty? bindings)
-;    `(do ~@body)
-;    (let [sym (first bindings)
-;          the-fut (second bindings)
-;          t (nthrest bindings 2)]
-;      `(let [f# ~the-fut
-;             g# (fut)]
-;         (if (fut? f#)
-;           (.bind! f#
-;                   (fn [xs#] 
-;                     (let [~sym xs#]
-;                       (g# (do `~(dofut0 ~t ~body)))
-;                       )))
-;           (let [~sym f#] 
-;             (g# (do `~(dofut0 ~t (do ~@body)))))
-;           )
-;         g#
-;         ))))
-;
-;
-;
-;(defmacro dofut
-;  [fut-bindings & body]
-;  `(dofut0 ~fut-bindings ~body))
-
 (defn to-fut
   "Convert a function which takes a \"finish\" callback to a future" 
   ([f]
-   (fn [ & xs] 
+   (fn [& xs] 
      (let [^Fut a-fut (fut)
            g (fn [y & ys] (if ys 
                             (a-fut (conj y ys))
@@ -197,31 +170,6 @@
           dofut-body 
           ret-fut-sym)))
 
-;(defn <-
-;  "Convert a function to a future function. 
-;  
-;  (<- connect! host port) 
-;  (<- (connect! host port))
-;
-;  (>>= 
-;    (let [g (<- connect! host port)]
-;      (println @g))
-;  "
-;  [f & xs] 
-;  (let [a (fut)
-;        b (fn [& ys] (apply deliver! a ys))]
-;      (apply f b xs)
-;      a))
-;
-;(defn <<-
-;  [f & xs] 
-;  (let [a (fut)
-;        b (fn [& ys] (apply deliver! a ys))]
-;    (apply f (concat xs [b]))
-;    a))
-;
-
-
 (defn future-ref?
   [form]
   (and (symbol? form) 
@@ -269,8 +217,8 @@
   [h-form & t-form]
   `(let [h-form0# ~h-form]
      (if (fut? h-form0#)
-       (.bind! h-form0# (fn [x] (-> x ~t-form)))
-       (-> x ~t-form))))
+       (.bind! h-form0# (fn [x#] (-> x# ~t-form)))
+       (-> h-form0# ~t-form))))
 
 (defmacro >>
   "Thread values through function(s) which return futures.
@@ -280,6 +228,6 @@
   [h-form t-form]
   `(let [h-form0# ~h-form]
      (if (fut? h-form0#)
-       (.bind! h-form0# (fn [x] ~t-form)))
+       (.bind! h-form0# (fn [x#] ~t-form)))
        ~t-form))
 

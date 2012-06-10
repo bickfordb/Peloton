@@ -8,69 +8,96 @@
   (:import java.util.PriorityQueue)
   (:use peloton.util))
 
-(def ^:dynamic ^Selector selector)
-(def ^:dynamic ^java.util.PriorityQueue *pending*)
+(set! *warn-on-reflection* true)
+
 (def ^:dynamic ^SelectionKey selection-key)
+
+(def ^:dynamic *reactor*) 
+
+(defrecord Timeout
+  [^long timestamp
+   ^clojure.lang.IFn callable
+   ^clojure.lang.ISeq context])
+
+(definterface IReactor
+  (start [])
+  (stop [])
+  (^boolean running [])
+  (^java.nio.channels.Selector selector)
+  (later [^long seconds 
+          ^clojure.lang.IFn callable 
+          ^clojure.lang.ISeq context]))
+
+(deftype Reactor
+  [^Selector selector
+   ^PriorityQueue pending
+   ^boolean ^{:volatile-mutable true} running?]
+  IReactor 
+  (stop [this] (set! running? (boolean false)))
+  (start [this] (set! running? (boolean true)))
+  (running [this] running?)
+  (selector [this] selector)
+  (later [this seconds callable context]
+    (.add pending
+        (Timeout. (+ (System/currentTimeMillis) (* 1000.0 seconds)) callable context))))
+
+(defn timeout-queue
+  []
+  (java.util.PriorityQueue. 10 (comparator #(< #^long (.timestamp #^Timeout %1) #^long (.timestamp #^Timeout %2)))))
+
+(defn reactor
+  []
+  (Reactor. 
+    (until (safe nil (.openSelector (SelectorProvider/provider))))
+    (timeout-queue)
+    true))
+
 
 (def op-bits [SelectionKey/OP_ACCEPT SelectionKey/OP_READ SelectionKey/OP_WRITE SelectionKey/OP_CONNECT])
 
-(defn p-queue
-  []
-  (java.util.PriorityQueue. 10 (comparator (fn [[a & _] [b & _]] (compare a b)))))
-
-(defmacro with-reactor [& xs]
-  `(binding [selector (until (safe nil (.openSelector (SelectorProvider/provider))))
-             *pending* (p-queue)] 
-     ~@xs))
-
 (defn timeout
   [seconds f & fargs]
-  (.add #^PriorityQueue *pending* 
-        [(+ (System/currentTimeMillis) (* 1000.0 seconds)) f fargs]))
+  (.later #^Reactor *reactor* seconds f fargs))
 
 (defmacro later
   [seconds & body]
-  `(let [f# (fn [] (do ~@body))]
-     (timeout ~seconds (fn [] ~@body))))
+ `(.later #^Reactor *reactor* ~seconds (fn [] ~@body) ()))
 
 (defn run-pending-events
-  []
-  (let [now (System/currentTimeMillis)]
-    (loop [[timestamp f fargs] (.peek *pending*)]
-      (when (and (not (nil? timestamp)) (< timestamp now))
-        (.remove #^PriorityQueue *pending*)
-        (try
-          (apply f fargs)
-          (catch Exception e
-            (.printStackTrace e)))
-        (recur (.peek *pending*))))))
-
-
-(defmacro ignore
-  [& body]
-  `(try
-     ~@body
-     (catch Exception e# (.printStackTrace e#))))
+  [^Reactor reactor]
+  (let [^PriorityQueue pending (.pending reactor)]
+    (loop [^Timeout timeout (.peek pending)]
+      (when (and timeout (< (.timestamp timeout) (System/currentTimeMillis)))
+        (.remove pending)
+        (ignore-and-print
+          (apply (.callable timeout) (.context timeout)))
+        (recur (.peek pending))))))
 
 (defn react 
-  []
-  (while true 
-    (.select selector 1000) 
-    (run-pending-events)
-    (doseq [s-key (.selectedKeys selector)]
+  [^Reactor reactor]
+  (while (.running reactor)
+    (.select (.selector reactor) 50)
+    (run-pending-events reactor)
+    (doseq [^SelectionKey s-key (.selectedKeys (.selector reactor))]
       (when (and s-key (.isValid s-key))
         (binding [selection-key s-key]
           (let [attachment (or (.attachment s-key) {})
-                ^int ready (.readyOps s-key)]
+                ready (.readyOps s-key)]
             (doseq [bit op-bits]
-              (when (= (bit-and ready bit) bit)
+              (when (== (bit-and ready bit)  bit)
                 (let [[f xs] (get attachment bit)]
                   (when f
-                    (ignore (apply f xs))))))))))))
+                    (ignore-and-print (apply f xs))))))))))))
 
-(defn register!
-  [^SelectableChannel chan s-key f & fargs]
-  (let [selection-key (.keyFor chan selector)
+(defmacro with-reactor [& xs]
+  `(binding [*reactor* (reactor)]
+      ~@xs
+      (react *reactor*)))
+
+(defn register-reactor!
+  [^SelectableChannel chan #^Reactor reactor s-key f & fargs]
+  (let [selector (.selector reactor)
+        selection-key (.keyFor chan selector)
         evt (int s-key)
         callbacks {evt [f fargs]}]
     (if selection-key
@@ -79,9 +106,15 @@
         (.interestOps selection-key (bit-or (.interestOps selection-key) evt)))
       (.register chan selector evt callbacks))))
 
-(defn unregister!
-  [^SelectableChannel chan op]
-  (let [selection-key (.keyFor chan selector)]
+(defn register!
+  [chan s-key f & fargs]
+  (apply register-reactor! chan *reactor* s-key f fargs))
+
+
+(defn unregister-reactor!
+  [^SelectableChannel chan ^Reactor reactor op]
+  (let [selector (.selector reactor)
+        selection-key (.keyFor chan selector)]
     (when selection-key
       (let [attachment (or (.attachment selection-key) {})
             attachment0 (dissoc attachment op)
@@ -89,10 +122,14 @@
         (.attach selection-key attachment0)
         (.interestOps selection-key op0)))))
 
+(defn unregister!
+  [^SelectableChannel chan op]
+  (unregister-reactor! chan *reactor* op))
+
 (defn on-op! 
   [op] 
   (fn [chan f & fargs]
-    (apply register! chan op f fargs)))
+    (apply register-reactor! chan *reactor* op f fargs)))
 
 (defn stop-op!
   [op]
@@ -100,15 +137,20 @@
     (unregister! chan op)))
 
 (defn on-once
-  [chan op f fargs]
-  (unregister! chan op)
+  [reactor chan op f fargs]
+  (unregister-reactor! chan reactor op)
   (when f
     (apply f fargs)))
 
 (defn on-op-once!
   [op]
   (fn [chan f & fargs]
-    (register! chan op on-once chan op f fargs)))
+    (register-reactor! chan *reactor* op on-once *reactor* chan op f fargs)))
+
+(defn on-reactor-op-once!
+  [op]
+  (fn [reactor chan f & fargs]
+    (register-reactor! chan reactor op on-once reactor chan op f fargs)))
 
 (def on-acceptable! (on-op! SelectionKey/OP_ACCEPT))
 (def on-readable! (on-op! SelectionKey/OP_READ))
@@ -125,10 +167,22 @@
 (def on-writable-once! (on-op-once! SelectionKey/OP_WRITE))
 (def on-connectable-once! (on-op-once! SelectionKey/OP_CONNECT))
 
+(def on-reactor-acceptable-once! (on-reactor-op-once! SelectionKey/OP_ACCEPT))
+(def on-reactor-readable-once! (on-reactor-op-once! SelectionKey/OP_READ))
+(def on-reactor-writable-once! (on-reactor-op-once! SelectionKey/OP_WRITE))
+(def on-reactor-connectable-once! (on-reactor-op-once! SelectionKey/OP_CONNECT))
+
 (defn reset-chan! 
   [^SelectableChannel chan]
-  (let [selection-key (.keyFor chan selector)]
+  (let [selection-key (.keyFor chan (.selector #^Reactor *reactor*))]
     (when selection-key 
       (.attach selection-key nil)
       (when (.isValid selection-key)
        (.cancel selection-key)))))
+
+(defn stop!
+  "Stop the reactor"
+  []
+  (.stop #^Reactor *reactor*))
+
+

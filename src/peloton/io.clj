@@ -52,28 +52,31 @@
                 (.order buffer ByteOrder/LITTLE_ENDIAN)
                 (on-int (.getInt buffer)))))))
 
+; array which matches the end of headers
+
 (defn read-line0!
   [^SocketChannel chan
    ^ByteBuffer buffer
    ^ByteArrayOutputStream os
    after & args]
-  (loop []
-    (condp = (.read chan buffer)
-      ; dead
-      -1 (apply after (concat args [nil]))
-      ; empty:
-      0 (apply reactor/on-readable-once! chan read-line0! chan buffer os after args)
-      ; otherwise
-      (do 
-        (.flip buffer)
-        (let [a-byte (long (.get buffer))]
-          (.compact buffer)
-          (.write os (int a-byte))
-          (if (== a-byte 10)
-            (let [s (String. (.toByteArray os) #^Charset UTF-8)
-                  args0 (concat args [s])]
-              (apply after args0))
-            (recur)))))))
+  (let [#^Reactor reactor reactor/*reactor*]
+    (loop []
+      (condp = (.read chan buffer)
+        ; dead
+        -1 (apply after (concat args [nil]))
+        ; empty:
+        0 (apply reactor/on-reactor-readable-once! reactor chan read-line0! chan buffer os after args)
+        ; otherwise
+        (do 
+          (.flip buffer)
+          (let [a-byte (long (.get buffer))]
+            (.compact buffer)
+            (.write os (int a-byte))
+            (if (== a-byte 10)
+              (let [s (String. (.toByteArray os) #^Charset UTF-8)
+                    args0 (concat args [s])]
+                (apply after args0))
+              (recur))))))))
 
 (defn read-line!
   "Read a line from chan and call after with it when done."

@@ -432,8 +432,7 @@
         channel (bind! ports listen-backlog)]
       (spread 
         (with-reactor 
-          (listen! channel (with-routes routes))
-          (react)))))
+          (listen! channel (with-routes routes))))))
 
 (defn write-file-channel!
   [^Connection conn

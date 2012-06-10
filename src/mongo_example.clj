@@ -1,5 +1,6 @@
 (ns mongo-example
   (:gen-class)
+  (:require [peloton.reactor :as reactor])
   (:use peloton.reactor)
   (:use peloton.mongo)
   (:use peloton.util)
@@ -8,14 +9,20 @@
 (defn -main 
   [& args]
   (with-reactor 
-    (dofut [[conn] (connect-fut! "127.0.0.1" default-port)
-            [deleted?] (delete-fut! conn "foods.groups" {}) 
-            [inserted?] (insert-fut! conn "foods.groups" [{:name "Fruits"}])
-            [updated? & xs] (update-fut! conn "foods.groups" {:name "Fruits"} {:color "green"})
-            [query-response] (query-fut! conn "foods.groups" {})]
+    (dofut [conn (connect! "127.0.0.1" default-port)
+            deleted? (delete! conn "foods.groups" {}) 
+            inserted? (insert! conn "foods.groups" [{:name "Fruits"}])
+            updated? (update! conn "foods.groups" {:name "Fruits"} {:color "Green"})
+            docs (query-all! conn "foods.groups" {})
+            _ (delete! conn "foods.groups" {})
+            _ (delete! conn "x.y" {})
+            large-inserted? (insert! conn "x.y" (repeat 5000 {:x 1}))
+            large-result (query-all! conn "x.y" {} :limit 5000)]
            (with-stderr 
              (println "inserted?:" inserted?)
              (println "deleted?" deleted?)
              (println "updated?" updated?)
-             (println "response:" query-response)))
-    (react)))
+             (println "response:" docs)
+             (println "other docs:" (count large-result)))
+           (reactor/stop!))
+    ))

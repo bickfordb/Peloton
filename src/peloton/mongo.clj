@@ -31,7 +31,7 @@
                :update 2001
                :insert 2002
                :query 2004
-               :getmore 2005
+               :get-more 2005
                :delete 2006
                :kill-cursors 2007})
 
@@ -102,23 +102,25 @@
 
 (defn write-buffer! 
   [^Connection conn 
-   ^ByteBuffer b
-   after]
-  (-> conn (.out-buffers) (.add [b after]))
-  (send-buffers! conn))
+   ^ByteBuffer b]
+  (let [f (fut)]
+    (if conn 
+      (do 
+        (-> conn (.out-buffers) (.add [b f]))
+        (send-buffers! conn)
+        )
+      (f false))
+    f))
 
 (defn write-frame! 
   [^Connection c
-   ^bytes b
-   on-write]
+   ^bytes b]
   (let [buffer (ByteBuffer/allocate 4)]
     (.order buffer ByteOrder/LITTLE_ENDIAN)
     (.putInt buffer (+ (count b) 4))
     (.flip buffer)
-    (write-buffer! c buffer (fn [succ?] 
-                              (if succ?
-                                (write-buffer! c (ByteBuffer/wrap b) on-write)
-                                (on-write false))))))
+    (write-buffer! c buffer)
+    (write-buffer! c (ByteBuffer/wrap b))))
 
 (defn put-header! 
   ([bs op-code]
@@ -133,7 +135,7 @@
 
 
 (defn update!
-  [conn collection-name selector update after & flags]
+  [conn collection-name selector update & flags]
   (let [flags0 (apply hash-map flags)
         body (ByteArrayOutputStream.)]
     (put-header! body (:update op-codes)) ;header
@@ -142,13 +144,10 @@
     (bits/put-le-i32! body (to-flag-bits flags0 update-flags)) ; flags
     (.write body (bson/encode-doc selector)) ; the selector document (analog to the WHERE part of a SQL query) 
     (.write body (bson/encode-doc update)) ; the update statement (analog to the SET part of a SQL query) 
-    (write-frame! conn (.toByteArray body) after)))
-
-(def update-fut! (to-fut update! 4))
-
+    (write-frame! conn (.toByteArray body))))
 
 (defn delete! 
-  [conn collection-name selector after & flags]
+  [conn collection-name selector & flags]
   (let [flags0 (apply hash-map flags)
         body (ByteArrayOutputStream.)]
     (put-header! body (:delete op-codes)) ;header
@@ -156,29 +155,22 @@
     (bits/put-cstring! body collection-name) ; collection name
     (bits/put-le-i32! body (to-flag-bits flags0 delete-flags)) ; flags
     (.write body (bson/encode-doc selector)) ; the selector document (analog to the WHERE part of a SQL query) 
-    (write-frame! conn (.toByteArray body) after)))
-
-(def delete-fut! (to-fut delete! 3))
-
+    (write-frame! conn (.toByteArray body))))
 
 (defn flush! 
   [conn]
   (-> conn (.socket-channel) (.socket) (.getOutputStream) (.flush)))
 
 (defn insert!
-  [conn collection-name docs after]
-  (if conn
-    (let [body (ByteArrayOutputStream.)
-          docs0 (map bson/add-object-id docs)]
-      (put-header! body (:insert op-codes))
-      (bits/put-le-i32! body 0)
-      (bits/put-cstring! body collection-name)
-      (doseq [doc docs0]
-        (.write body (bson/encode-doc doc)))
-      (write-frame! conn (.toByteArray body) after))
-    (after false)))
-
-(def insert-fut! (to-fut insert! 3))
+  [conn collection-name docs]
+  (let [body (ByteArrayOutputStream.)
+        docs0 (map bson/add-object-id docs)]
+    (put-header! body (:insert op-codes))
+    (bits/put-le-i32! body 0)
+    (bits/put-cstring! body collection-name)
+    (doseq [doc docs0]
+      (.write body (bson/encode-doc doc)))
+    (write-frame! conn (.toByteArray body))))
 
 (defn parse-packet
   [^ByteBuffer b]
@@ -204,68 +196,117 @@
                                                                      (recur dset)
                                                                      (recur (conj dset d))))
                                            :else dset)))]
-                            {:reply {:flags flags
-                                     :cursor-id cursor-id
-                                     :starting-from starting-from
-                                     :number-returned number-returned
-                                     :documents docs}})
+                            {:flags flags
+                             :cursor-id cursor-id
+                             :starting-from starting-from
+                             :number-returned number-returned
+                             :documents docs})
         {}))))
 
-(defn read-packet! 
-  [conn on-reply]
-  (io/read-le-i32!  
-    (.socket-channel conn)
-    (fn [sz] 
-      (cond 
-        (nil? sz) (on-reply nil)
-        :else (io/read-to-buf!
-                (.socket-channel conn)
-                (- sz 4)
-                (fn [^ByteBuffer b]
-                  (.flip b)
-                  (on-reply (parse-packet b))))))))
+(defn read-frame!
+  [conn]
+  (let [on-frame (fut)]
+    (io/read-le-i32!  
+      (.socket-channel conn)
+      (fn [sz] 
+        (cond 
+          (nil? sz) (on-frame nil)
+          :else (io/read-to-buf!
+                  (.socket-channel conn)
+                  (- sz 4)
+                  (fn [^ByteBuffer b]
+                    (.flip b)
+                    (on-frame b))))))
+    on-frame))
 
-(defn query! 
+(defn read-packet! 
+  "Read a packet
+
+  Returns a future which fires when the packet fires.
+  "
+  [conn]
+  (dofut [packet (read-frame! conn)] 
+         (when packet (parse-packet packet))))
+
+(defn query-raw! 
   [conn 
    collection-name 
    query-doc 
-   after 
    & opts]
-  (if conn
-    (let [opts0 (apply hash-map opts)
-          offset (get opts0 :offset 0)
-          limit (get opts0 :limit 0)
-          fieldset (get opts0 :fieldset nil)
-          bs (ByteArrayOutputStream.)
-          flags 0
-          fs-doc (when fieldset
-                   (reduce conj (for [f fieldset] {f 1})))
-          after0 (fn [succ?]
-                   (if (not succ?)
-                     (do 
-                       (with-stderr 
-                         (println "Failed to write!"))
-                       (after false))
-                     (read-packet! conn after)))]
-      (put-header! bs (:query op-codes))
-      (bits/put-le-i32! bs (to-flag-bits opts0 query-flags)) ; flags
-      (bits/put-cstring! bs collection-name) ; name
-      (bits/put-le-i32! bs offset) ; offset
-      (bits/put-le-i32! bs limit) ; number to return
-      (.write bs (bson/encode-doc query-doc))
-      (when fs-doc
-        (.write bs (bson/encode-doc fs-doc)))
-      (write-frame! conn (.toByteArray bs) after0))
-    (after nil)))
+  (let [opts0 (apply hash-map opts)
+        offset (get opts0 :offset 0)
+        limit (get opts0 :limit 0)
+        fieldset (get opts0 :fieldset nil)
+        bs (ByteArrayOutputStream.)
+        flags 0
+        fs-doc (when fieldset
+                 (reduce conj (for [f fieldset] {f 1})))]
+    (put-header! bs (:query op-codes))
+    (bits/put-le-i32! bs (to-flag-bits opts0 query-flags)) ; flags
+    (bits/put-cstring! bs collection-name) ; name
+    (bits/put-le-i32! bs offset) ; offset
+    (bits/put-le-i32! bs limit) ; number to return
+    (.write bs (bson/encode-doc query-doc))
+    (when fs-doc
+      (.write bs (bson/encode-doc fs-doc)))
+    (dofut [query-sent? (write-frame! conn (.toByteArray bs))
+            packet (when query-sent? (read-packet! conn))]
+        packet)))
 
-(def query-fut! (to-fut query! 3))
+(defn kill-cursors!
+  [conn 
+   cursor-ids]
+   (let [bs (ByteArrayOutputStream.)]
+     (put-header! bs (:kill-cursors op-codes))
+     (bits/put-le-i32! bs 0) ; zero
+     (bits/put-le-i32! bs (count cursor-ids)) ; number of cursor ids
+     (doseq [cursor-id cursor-ids]
+       (bits/put-le-i64! bs cursor-id))
+     (write-frame! conn (.toByteArray bs))))
 
+(defn get-more!
+  [conn ; the mongo collection
+   collection-name ; the collection name
+   number-to-return ; the number of documents to return 
+   cursor-id] 
+  (let [bs (ByteArrayOutputStream.)]
+    (put-header! bs (:get-more op-codes))
+    (bits/put-le-i32! bs 0) ; zero
+    (bits/put-cstring! bs collection-name) ; name
+    (bits/put-le-i32! bs number-to-return) ; number to return
+    (bits/put-le-i32! bs cursor-id) ; cursor id
+    (dofut [wrote? (write-frame! conn (.toByteArray bs))
+            packet (when wrote? (read-packet! conn))]
+           packet)))
+
+(defn query-rest! 
+  [conn collection cursor-id & opts]
+  (dofut [opts- (apply hash-map opts)
+          {:keys [batch-size] :or {batch-size 1000}} opts-
+          more (when (and cursor-id (> cursor-id 0))
+                  (get-more! conn collection batch-size cursor-id))
+          {new-cursor-id :cursor-id 
+           documents :documents
+           :or {new-cursor-id 0 documents []}} more
+          killed? (when (not (= new-cursor-id cursor-id))
+                    (kill-cursors! conn [cursor-id]))
+          rest- (when (and new-cursor-id (> new-cursor-id 0) (> (count documents) 0))
+                  (apply query-rest! conn collection new-cursor-id opts))
+          rest-documents (:documents rest)]
+         (concat [] documents rest-documents)))
+
+(defn query-all!
+  [conn collection & args]
+  (dofut [ret (apply query-raw! conn collection args)
+          docs (query-rest! conn collection (:cursor-id ret))]
+          (concat [] (:documents ret) docs)))
+        
 (defn connect! 
   [^String address 
-   ^long port
-   f]
+   ^long port]
   (let [addr (InetSocketAddress. address port)
         socket-channel (SocketChannel/open)
+        ret (fut)
         socket (.socket socket-channel)]
     (.configureBlocking socket-channel false)
     (doto (.socket socket-channel)
@@ -274,14 +315,12 @@
       (.setSoLinger false 0)
       (.setSoTimeout 0)
       (.setTcpNoDelay false))
-    (reactor/on-connectable-once! socket-channel on-connect f)
-    (.connect socket-channel addr)))
-
-(def connect-fut! (to-fut connect!))
+    (reactor/on-connectable-once! socket-channel on-connect ret)
+    (.connect socket-channel addr)
+    ret))
 
 (defn close! 
   [^Connection c]
   (.close (.socket-channel c))
-  (reactor/reset-chan! (.socket-channel c))
-  )
+  (reactor/reset-chan! (.socket-channel c)))
 
