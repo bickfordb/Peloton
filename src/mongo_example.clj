@@ -17,7 +17,12 @@
             _ (delete! conn "foods.groups" {})
             _ (delete! conn "x.y" {})
             large-inserted? (insert! conn "x.y" (repeat 5000 {:x 1}))
-            large-result (query-all! conn "x.y" {} :limit 5000)]
+            large-result (query-all! conn "x.y" {} :limit 5000)
+            books (query-stream! conn "x.y" {})
+            x (atom 0)
+            _ (do-stream 
+                [b books]
+                true)]
            (with-stderr 
              (println "inserted?:" inserted?)
              (println "deleted?" deleted?)

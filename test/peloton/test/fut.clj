@@ -74,11 +74,7 @@
                f2 (fut)]
            (>? 
               (let [q0 (+ ?f0 ?f1)]
-                (println "q0: " ?q0))
-                ;(reset! v0 ?q0)
-                ;)
-           )))
-
+                (println "q0: " ?q0)))))
 
 (deftest dofut-test-0
          (let [a (fut)
@@ -87,11 +83,10 @@
                cell (atom nil)]
            (dofut [y b]
                   (reset! cell y))
-           
            (is (= @cell nil))
            (a 1)
            (is (= @cell 2))))
           
 
 
-
+ 

@@ -8,6 +8,7 @@
   (:require [peloton.reactor :as reactor])
   (:use peloton.util) 
   )
+(set! *warn-on-reflection* true)
   
 (defn fill-buffer!
   "Fill up a byte buffer"

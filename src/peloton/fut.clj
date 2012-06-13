@@ -7,56 +7,48 @@
   (:use peloton.util) 
   )
 
-(defprotocol IFut
-  (bind! [fut listener] [fut listener context])
+(defprotocol ICell
+  (bind! [fut listener])
   (unbind! [fut listener])
   ; from IFn
   (invoke [fut a-val]))
 
-;
-;(defrecord ContinuousCell
-; [^clojure.lang.Atom latest
-;  ^clojure.lang.Atom done
-;  ^clojure.lang.Atom listeners]
-;  IDataFlow
-;  (bind [this listener]
-;    (swap! listeners conj listener)
-;    (when @done
-;      (listener @latest)))
-;  (unbind [this listener]
-;    (swap! listeners (fn [xs] (filter (not (= % listener)) xs))))
-;  clojuare.lang.IFn
-;  (invoke [this val] 
-;    (reset! done true)
-;    (reset! latest val)
-;    (doseq [l listeners]
-;      (l val))))
-;
-;(defn continuous
-;  []
-;  (ContinuousCell. (atom nil) (atom false) (atom [])))
+(defrecord ChannelCell
+ [^clojure.lang.Atom buffer
+  ^clojure.lang.Atom done
+  ^clojure.lang.Atom listener]
+  ICell
+  (bind! [this l]
+    (reset! listener l)
+    (if l 
+      (while (and (not @done) (not (empty? @buffer)))
+        (swap! @buffer (fn [xs]
+                         (l (first xs))
+                         (rest xs))))))
+  (unbind! [this l]
+    (swap! listener (fn [x] (cond (= x l) nil :else x))))
+  clojure.lang.IFn
+  (invoke [this val] 
+    (let [l @listener]
+      (if l 
+        (l val)
+        (reset! buffer conj val)))))
 
 ; a cell which only fires once.
-;
 (defrecord OneShotCell
   [^clojure.lang.Atom promised
    ^clojure.lang.Atom done
    ^clojure.lang.Atom listeners]
-  IFut
+  ICell
   (bind! [this listener]
     (if @done
       (listener @promised)
-      (swap! listeners conj [listener nil]))
-    nil)
-  (bind! [this listener context]
-    (if @done
-      (listener context @promised)
-      (swap! listeners conj [listener context]))
+      (swap! listeners conj listener))
     nil)
   (unbind! [this listener] 
     (if @done
       (listener @promised)
-      (swap! listeners conj listener))
+      (swap! listeners (fn [xs] (remove #(= %1) xs))))
     nil)
   clojure.lang.IFn
   (invoke [this val] 
@@ -64,28 +56,11 @@
       (reset! promised val)
       (reset! done true)
       ; send the message
-      (doseq [[listener ctx] @listeners]
-        (if ctx
-          (listener ctx val)
-          (listener val)))
+      (doseq [listener @listeners]
+        (listener val))
       ; clear existing listeners
       (reset! listeners [])
       nil)))
-
-(defn fut
-  [] 
-  (OneShotCell. (atom nil) (atom false) (atom [])))
-
-;(defmacro >>= 
-;  "
-;  (>>= 
-;      (connect host port) 
-;      (query selector) 
-;      (fn [result] (println result)))
-;  "
-;  [h & t]
-;  `(let [h# ~h]
-;      (loop [
 
 (defn fut 
   "Create a future"
@@ -95,11 +70,10 @@
     (atom false)
     (atom [])))
 
-
 (defn fut? 
   "Check to see if x is a future"
   [x] 
-  (satisfies? IFut x))
+  (satisfies? ICell x))
 
 (defn to-fut
   "Convert a function which takes a \"finish\" callback to a future" 
@@ -212,22 +186,22 @@
     (future-ref? form) (replace-future-sym form) 
     :else (clojure.walk/postwalk replace-future-ref form)))
 
-(defmacro >>= 
-  "Bind futures together"
-  [h-form & t-form]
-  `(let [h-form0# ~h-form]
-     (if (fut? h-form0#)
-       (.bind! h-form0# (fn [x#] (-> x# ~t-form)))
-       (-> h-form0# ~t-form))))
-
-(defmacro >>
-  "Thread values through function(s) which return futures.
-
-  Usage. (>= (connect) (fn [conn] (query conn {:id 5})) (render-page )))
-  "
-  [h-form t-form]
-  `(let [h-form0# ~h-form]
-     (if (fut? h-form0#)
-       (.bind! h-form0# (fn [x#] ~t-form)))
-       ~t-form))
-
+;(defmacro >>= 
+;  "Bind futures together"
+;  [h-form & t-form]
+;  `(let [h-form0# ~h-form]
+;     (if (fut? h-form0#)
+;       (.bind! h-form0# (fn [x#] (-> x# ~t-form)))
+;       (-> h-form0# ~t-form))))
+;
+;(defmacro >>
+;  "Thread values through function(s) which return futures.
+;
+;  Usage. (>= (connect) (fn [conn] (query conn {:id 5})) (render-page )))
+;  "
+;  [h-form t-form]
+;  `(let [h-form0# ~h-form]
+;     (if (fut? h-form0#)
+;       (.bind! h-form0# (fn [x#] ~t-form)))
+;       ~t-form))
+;
