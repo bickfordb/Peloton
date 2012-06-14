@@ -14,6 +14,7 @@
   (:require [peloton.io :as io]) 
   (:require [peloton.reactor :as reactor])
   (:use peloton.fut)
+  (:use peloton.stream)
   (:use peloton.util))
 
 (def default-port 27017)
@@ -295,10 +296,40 @@
           rest-documents (:documents rest)]
          (concat [] documents rest-documents)))
 
+(defn query-stream-rest! 
+  [conn collection cursor-id & opts]
+  (let [^peloton.stream.IStream a-stream (stream)
+        {:keys [batch-size] :or {batch-size 1000}} opts]
+    (if (and cursor-id (> cursor-id 0))
+      (dofut [{new-cursor-id :cursor-id 
+               documents :documents
+               :or {new-cursor-id 0 documents []}} (get-more! conn collection batch-size cursor-id)
+              _ (when (not (= new-cursor-id cursor-id))
+                        (kill-cursors! conn [cursor-id]))
+              _ (doseq [document documents] (a-stream document))
+              sub-stream (apply query-stream-rest! conn collection new-cursor-id opts)
+              _ (do-stream [document sub-stream]
+                           (a-stream document))]
+             (.close! a-stream))
+        (.close! a-stream))
+    a-stream))
+     
+(defn query-stream!
+  [conn collection query-doc & opts]
+  (let [^peloton.stream.IStream a-stream (stream)]
+    (dofut [query-result (apply query-raw! conn collection query-doc opts)
+            _ (doseq [document (:documents query-result)]
+                (a-stream document))
+            sub-stream (apply query-stream-rest! conn collection (:cursor-id query-result) opts)
+            stream-done? (do-stream [i sub-stream]
+                                    (a-stream i))]
+           (.close! a-stream))
+    a-stream))
+
 (defn query-all!
-  [conn collection & args]
-  (dofut [ret (apply query-raw! conn collection args)
-          docs (query-rest! conn collection (:cursor-id ret))]
+  [conn collection query-doc & opts]
+  (dofut [ret (apply query-raw! conn collection query-doc opts)
+          docs (apply query-rest! conn collection (:cursor-id ret) opts)]
           (concat [] (:documents ret) docs)))
         
 (defn connect! 

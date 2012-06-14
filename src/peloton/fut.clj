@@ -100,11 +100,13 @@
 
 (defn do-fut-inner-bind 
   [bind-to bind-from-fut on-fut]
-  (let [bind-from-fut0 (gensym "bind-from-fut-")]
-    (list 'let [bind-from-fut0 bind-from-fut]
+  (let [bind-from-fut0 (gensym "bind-from-fut-")
+        bind-fn (gensym "bind-fn")]
+    (list 'let [bind-from-fut0 bind-from-fut
+                bind-fn (list 'fn [bind-to] on-fut)]
           (list 'if (list `fut? bind-from-fut0)
-                (list '.bind! bind-from-fut0 (list 'fn [bind-to] on-fut))
-                (list `let [bind-to bind-from-fut0] on-fut)))))
+                (list '.bind! bind-from-fut0 bind-fn)
+                (list bind-fn bind-from-fut0)))))
 
 (defn do-fut-inner 
   [bindings outer-fut body]

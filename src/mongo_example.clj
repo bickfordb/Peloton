@@ -4,7 +4,13 @@
   (:use peloton.reactor)
   (:use peloton.mongo)
   (:use peloton.util)
+  (:use peloton.stream)
   (:use peloton.fut))
+
+(defn println-err
+  [& s]
+  (binding [*out* *err*]
+    (apply println s)))
 
 (defn -main 
   [& args]
@@ -18,16 +24,19 @@
             _ (delete! conn "x.y" {})
             large-inserted? (insert! conn "x.y" (repeat 5000 {:x 1}))
             large-result (query-all! conn "x.y" {} :limit 5000)
-            books (query-stream! conn "x.y" {})
+            books (query-stream! conn "x.y" {} :limit 5000)
             x (atom 0)
-            _ (do-stream 
-                [b books]
-                true)]
+            stream-done? (do-stream [b books]
+                                    (swap! x inc))]
            (with-stderr 
-             (println "inserted?:" inserted?)
-             (println "deleted?" deleted?)
-             (println "updated?" updated?)
-             (println "response:" docs)
-             (println "other docs:" (count large-result)))
-           (reactor/stop!))
-    ))
+             (println-err "inserted?:" inserted?)
+             (println-err "deleted?" deleted?)
+             (println-err "updated?" updated?)
+             (println-err "response:" docs)
+             (println-err "other docs:" (count large-result))
+             (println-err "books:" books)
+             (println-err "stream-done?" stream-done?)
+             (println-err "other docs2:" @x))
+              
+
+           (reactor/stop!))))
