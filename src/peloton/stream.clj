@@ -46,8 +46,7 @@
   (instance? peloton.stream.IStream s))
 
 (defmacro do-stream
-  "Run a body block in a stream with a binding
-  "
+  "Run a body block in a stream with a binding"
   [bindings & body]
   (assert (= (count bindings) 2) "expecting 2 bindings")
   (let [[h t] bindings]
