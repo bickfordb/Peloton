@@ -190,11 +190,13 @@ Percentage of the requests served within a certain time (ms)
  100%    146 (longest request)
 ```
 
-Benchmark system:
+Notes:
 
-2010 MacBook Pro, 8GB memory, SATA HDD
-
-(I expect this will be faster on Linux on newer server class hardware)
+* The benchmark system is a 2010 MacBook Pro, 8GB memory, SATA HDD running Mac OSX Lion (10.7.4) with Java 6.  I expect this will be faster on Linux on newer server class hardware and Java 7.
+* According to top during the benchmark the Java process running the daemon consumed a steady 109MiB ram (RSS)
+* Quick googl-ing presents a little comparison with other pop languages and libraries
+  * A similar Ruby On Rails benchmark (http://www.rubyenterpriseedition.com/comparisons.html) suggests Ruby On Rails produces 470/requests per second.  
+  * A similar node.js oriented benchmark (http://zgadzaj.com/benchmarking-nodejs-basic-performance-tests-against-apache-php) suggests node.js handlers respond with 4725/requests per second and PHP responds with 823/requests per second.
 
 License
 -------
