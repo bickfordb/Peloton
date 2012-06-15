@@ -1,20 +1,22 @@
 (ns peloton.stream
   (:use peloton.util)
+  (:use peloton.cell)
   (:require [peloton.fut :as fut]))
 
-(definterface IStream
-  (bind_BANG_ [^clojure.lang.IFn f])
-  (close_BANG_ [])
-  (^boolean eof_QMARK_ [])
-  (invoke [x])
-  (unbind_BANG_ [f]))
-
+(defprotocol IStream
+  (close! [this])
+  (^boolean eof? [this]))
+  
 (deftype Stream 
   [^clojure.lang.PersistentQueue ^{:volatile-mutable true} buffer 
    ^boolean ^{:volatile-mutable true} closed?
    ^clojure.lang.IFn ^{:volatile-mutable true} target]
   IStream
   (eof? [this] (and (empty? buffer) closed?))
+  (close! [this] 
+    (set! closed? (boolean true))
+    (when target (target nil)))
+  ICell
   (bind! [this t]
     (set! target t)
     (while (and 
@@ -27,9 +29,6 @@
     nil)
   (unbind! [this t]
     (set! target t))
-  (close! [this] 
-    (set! closed? (boolean true))
-    (when target (target nil)))
   clojure.lang.IFn
   (invoke [this a-val] 
     (if target
@@ -43,7 +42,7 @@
 (defn stream?  
   "Check to see if s is a stream"
   [s] 
-  (instance? peloton.stream.IStream s))
+  (instance? Stream s))
 
 (defmacro do-stream
   "Run a body block in a stream with a binding"
@@ -57,7 +56,7 @@
                   (f# true)
                   (do ~@body)))]
        (cond
-         (stream? t#) (.bind! #^peloton.stream.IStream t# g#)
+         (stream? t#) (peloton.cell/bind! t# g#)
          :else (g# t#))
        f#)))
   

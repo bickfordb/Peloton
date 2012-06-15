@@ -1,6 +1,7 @@
 (ns peloton.test.fut
   (:use [clojure.walk :only [macroexpand-all]])
   (:use peloton.fut)
+  (:use peloton.cell)
   (:use clojure.test))
 
 (deftest fut-test
@@ -8,7 +9,7 @@
          (let [a-fut (fut)
                y (atom nil)]
            (is (nil? @y))
-           (.bind! a-fut (fn [x] (reset! y x)))
+           (bind! a-fut (fn [x] (reset! y x)))
            (is (nil? @y))
            (a-fut "hello")
            (is (= @y "hello"))))
