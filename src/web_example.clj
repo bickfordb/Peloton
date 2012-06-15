@@ -5,24 +5,25 @@
   (:require [peloton.reactor :as reactor]))
 
 (defn on-index
+  "Return a page which says \"Hello from Peloton\""
   [conn] 
+  (httpd/set-content-type-html! conn)
   (httpd/set-response-body! conn "<h1>Hello from Peloton</h1>")
-  (httpd/add-response-header! conn "Content-Type" "text/html")
   (httpd/send-response! conn))
 
 (defn chunk-loop 
   [conn]
   (when (not (httpd/finished? conn))
-    (httpd/send-chunk! conn 
-                       (format "<script>x++;document.getElementById(\"foo\").innerHTML = \"\" + x;</script>"))
+    (httpd/send-chunk! 
+      conn 
+      (format "<script>x++;document.getElementById(\"foo\").innerHTML = \"\" + x;</script>"))
     (httpd/flush-output! conn)
     (reactor/timeout 1.0 chunk-loop conn)))
 
 (defn on-chunked 
+  "Return a page which displays a counter which increments once per second through JSONP chunked responses"
   [conn]
-  (httpd/set-response-status! conn 200)
-  (httpd/set-response-message! conn "OK")
-  (httpd/add-response-header! conn "Content-Type" "text/html")
+  (httpd/set-content-type-html! conn)
   (httpd/start-chunked-response! conn)
   (httpd/send-chunk! conn "<script>x=0;</script><h1 id=foo>1</h1>")
   (doseq [i (range 1024)]
