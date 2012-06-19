@@ -1,5 +1,6 @@
 (ns peloton.httpd
   (:use peloton.util)
+  (:require [peloton.http :as http])
   (:require peloton.mime)
   (:require [hiccup.core :as hiccup])
   (:require [peloton.io :as io])
@@ -22,19 +23,7 @@
   (:import java.nio.channels.spi.SelectorProvider))
 
 (set! *warn-on-reflection* true)
-
-(defonce header-pat #"^\s*(\S+)\s*[:]\s*(.+)\s*$")
-(defonce request-line-pat #"^\s*(\S+)\s+(\S+)\s+(\S+)\s*$")
-(declare not-found!)
-
-(defn get-header
-  ^String [headers #^String header-name] 
-  (loop [headers headers]
-    (when (not (empty? headers))
-      (let [[[^String k v] & t] headers]
-        (if (.equalsIgnoreCase header-name k) 
-          v 
-          (recur t)))))) 
+(def request-line-pat #"^\s*(\S+)\s+(\S+)\s+(\S+)\s*$") ; method, uri, protocol
 
 (defprotocol IBody 
   (^String protocol [r])
@@ -106,7 +95,6 @@
 (def date-fmt (doto 
                 (java.text.SimpleDateFormat. "EEE, dd MMM yyyy HH:mm:ss z")
                 (.setTimeZone (java.util.TimeZone/getTimeZone "GMT"))))
-
 
 (defn empty-response 
   []
@@ -276,27 +264,6 @@
   [^Connection conn]
   (set-out-buffers! conn (conj (out-buffers conn) [nil (fn [succ?] (socket-flush0! conn))])))
 
-;(defn send-buffers!
-;  [^Connection conn]
-;  (loop []
-;    (cond 
-;      (empty? (out-buffers conn)) (do 
-;                                      (set-sending! conn false)
-;                                      (when (finished? conn)
-;                                        (close-conn! conn)))
-;      :else (let [[^ByteBuffer buffer f] (first (out-buffers conn))]
-;              (cond 
-;                (and buffer (> (.remaining buffer) 0)) (condp 
-;                                            = 
-;                                            (safe -1 (.write #^SocketChannel (socket-channel conn) buffer))
-;                                            -1 (close-conn! conn) 
-;                                            0 (peloton.reactor/on-writable-once! (socket-channel conn) send-buffers! conn)
-;                                            (recur))
-;                :else (do 
-;                        (set-out-buffers! conn (rest (out-buffers conn)))
-;                        (when f (f true))
-;                        (recur)))))))
-
 (def barr (into-array ByteBuffer []))
 
 (defn send-buffers!'
@@ -314,16 +281,15 @@
                                                          (when f (f true))
                                                          (set-out-buffers! conn (rest (out-buffers conn)))
                                                          (recur))
-                :else (let [non-empty-bufs (remove #(and % (== (.remaining #^ByteBuffer %) 0)) (map first bufs))
+                :else (let [non-empty-bufs (remove nil? (map first bufs))
                             ^"[Ljava.nio.ByteBuffer;" buf-arr (.toArray #^java.util.Collection non-empty-bufs #^"[Ljava.nio.ByteBuffer;" barr) 
-                            ;^"[Ljava.nio.ByteBuffer;" buf-arr (into-array 
-                            ;                                    java.nio.ByteBuffer
-                            ;                                    non-empty-bufs)
-                            ;amt (safe -1 (.write (socket-channel conn) buf-arr))]
-                            amt (.write (socket-channel conn) buf-arr)]
-                        ;(println "write " amt)
+                            amt (safe -1 (.write (socket-channel conn) buf-arr))]
                         (condp = amt 
-                          -1 (close-conn! conn) 
+                          -1 (do
+                               (when f 
+                                 (f false))
+                               (set-out-buffers! conn (rest (out-buffers conn)))
+                               (recur))
                           0 (peloton.reactor/on-reactor-writable-once! 
                               (reactor conn)
                               (socket-channel conn)
@@ -384,7 +350,7 @@
   (let [^Response response (response conn)
         headers (headers response)
         body (body response)]
-    (when (nil? (get-header headers "Content-Length")) 
+    (when (nil? (http/get-header headers "Content-Length")) 
       (add-response-header! conn "Content-Length" (str (count body))))
     (send-headers! conn nil)
     (when body
@@ -396,7 +362,7 @@
   (let [^Response response (response conn)
         headers (headers response)
         body (body response)]
-    (when (not (= (get-header headers "Transfer-Encoding") "chunked"))
+    (when (not (= (http/get-header headers "Transfer-Encoding") "chunked"))
       (add-response-header! conn "Transfer-Encoding" "chunked"))
     (send-headers! conn nil)))
 
@@ -441,11 +407,11 @@
 (defn request-content-length
   "Get the content length of the request"
   [^Connection conn]
-  (safe-int (get-header (headers (request conn)) "Content-Length")))
+  (safe-int (http/get-header (headers (request conn)) "Content-Length")))
 
 (defn parse-header-line 
   [^String line]
-  (let [m (re-find header-pat line)]
+  (let [m (re-find http/header-pat line)]
     (when m [(get m 1) (get m 2)])))
 
 (defn parse-request-line
@@ -640,7 +606,7 @@
           (let [sz (safe 0 (.length f))
                 len sz
                 content-type "application/octet-stream"
-                range-header (get-header (headers (request conn)) "Range")
+                range-header (http/get-header (headers (request conn)) "Range")
                 {:keys [range-start-byte range-end-byte]} (parse-range-header range-header)
                 offset (if (nil? range-start-byte) 0 range-start-byte)
                 len (if (nil? range-end-byte) 

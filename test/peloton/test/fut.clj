@@ -68,14 +68,14 @@
              (f0 1)
              (is (= @v0 1)))))
 
-(deftest alg-test-1
-         (let [v0 (atom nil)
-               f0 (fut)
-               f1 (fut)
-               f2 (fut)]
-           (>? 
-              (let [q0 (+ ?f0 ?f1)]
-                (println "q0: " ?q0)))))
+;(deftest alg-test-1
+;         (let [v0 (atom nil)
+;               f0 (fut)
+;               f1 (fut)
+;               f2 (fut)]
+;           (>? 
+;              (let [q0 (+ ?f0 ?f1)]
+;                (println "q0: " ?q0)))))
 
 (deftest dofut-test-0
          (let [a (fut)

@@ -4,8 +4,7 @@
   (:import java.nio.ByteBuffer)
   (:import java.nio.channels.SocketChannel)
   (:import java.nio.charset.Charset)
-  (:require clojure.string)
-  )
+  (:require clojure.string))
 
 (defonce NEWLINE #^int (int 10))
 (defonce ISO-8859-1 #^Charset (.get (Charset/availableCharsets) "ISO-8859-1"))
@@ -50,6 +49,10 @@
 
 (def amp-pat #"[&]")
 (def eq-pat #"=")
+
+(defn quote-plus 
+  [^String s] 
+  (if s (java.net.URLEncoder/encode s) ""))  
 
 (defn parse-qs
   "Parse query string / form URL encoded data"
@@ -134,4 +137,10 @@
   `(try
      ~@body
      (catch Exception e# (.printStackTrace e#))))
+
+(defmacro default 
+  [x a-default]
+  `(let [x# ~x]
+    (if (nil? x#) ~a-default x#)))
+
 

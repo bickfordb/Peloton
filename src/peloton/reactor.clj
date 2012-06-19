@@ -1,4 +1,6 @@
 (ns peloton.reactor
+  (:import clojure.lang.PersistentQueue)
+  (:import clojure.lang.IFn)
   (:import java.net.InetSocketAddress)
   (:import java.nio.channels.Selector)
   (:import java.nio.channels.SelectionKey)
@@ -11,35 +13,33 @@
 (set! *warn-on-reflection* true)
 
 (def ^:dynamic ^SelectionKey selection-key)
-
 (def ^:dynamic *reactor*) 
 
 (defrecord Timeout
   [^long timestamp
-   ^clojure.lang.IFn callable
+   callable
    ^clojure.lang.ISeq context])
 
-(definterface IReactor
-  (start [])
-  (stop [])
-  (^boolean running [])
-  (^java.nio.channels.Selector selector)
-  (later [^long seconds 
-          ^clojure.lang.IFn callable 
-          ^clojure.lang.ISeq context]))
+(defprotocol IReactor
+  (set-running! [r x])
+  (^boolean running? [r])
+  (^java.nio.channels.Selector selector [r])
+  (^PriorityQueue pending [r])  
+  (add-timeout! [r seconds callable context]))
 
 (deftype Reactor
   [^Selector selector
    ^PriorityQueue pending
    ^boolean ^{:volatile-mutable true} running?]
   IReactor 
-  (stop [this] (set! running? (boolean false)))
-  (start [this] (set! running? (boolean true)))
-  (running [this] running?)
+  (add-timeout! [this seconds callable context]
+        (.add pending
+            (Timeout. (+ (System/currentTimeMillis) (* 1000.0 seconds)) callable context)))
+  (pending [this] pending)
+  (set-running! [this x] (set! running? (boolean x)))
+  (running? [this] running?)
   (selector [this] selector)
-  (later [this seconds callable context]
-    (.add pending
-        (Timeout. (+ (System/currentTimeMillis) (* 1000.0 seconds)) callable context))))
+  )
 
 (defn timeout-queue
   []
@@ -52,20 +52,20 @@
     (timeout-queue)
     true))
 
-
 (def op-bits [SelectionKey/OP_ACCEPT SelectionKey/OP_READ SelectionKey/OP_WRITE SelectionKey/OP_CONNECT])
 
-(defn timeout
+(defn timeout!
   [seconds f & fargs]
-  (.later #^Reactor *reactor* seconds f fargs))
+  (add-timeout! *reactor* seconds f fargs)
+)
 
-(defmacro later
+(defmacro later!
   [seconds & body]
- `(.later #^Reactor *reactor* ~seconds (fn [] ~@body) ()))
+ `(add-timeout! peloton.reactor/*reactor* ~seconds (fn [] ~@body) ()))
 
-(defn run-pending-events
+(defn run-pending-events!
   [^Reactor reactor]
-  (let [^PriorityQueue pending (.pending reactor)]
+  (let [^PriorityQueue pending (pending reactor)]
     (loop [^Timeout timeout (.peek pending)]
       (when (and timeout (< (.timestamp timeout) (System/currentTimeMillis)))
         (.remove pending)
@@ -75,10 +75,10 @@
 
 (defn react 
   [^Reactor reactor]
-  (while (.running reactor)
-    (.select (.selector reactor) 50)
-    (run-pending-events reactor)
-    (doseq [^SelectionKey s-key (.selectedKeys (.selector reactor))]
+  (while (running? reactor)
+    (.select (selector reactor) 50)
+    (run-pending-events! reactor)
+    (doseq [^SelectionKey s-key (.selectedKeys (selector reactor))]
       (when (and s-key (.isValid s-key))
         (binding [selection-key s-key]
           (let [attachment (or (.attachment s-key) {})
@@ -110,10 +110,9 @@
   [chan s-key f & fargs]
   (apply register-reactor! chan *reactor* s-key f fargs))
 
-
 (defn unregister-reactor!
   [^SelectableChannel chan ^Reactor reactor op]
-  (let [selector (.selector reactor)
+  (let [selector (selector reactor)
         selection-key (.keyFor chan selector)]
     (when selection-key
       (let [attachment (or (.attachment selection-key) {})
@@ -174,15 +173,12 @@
 
 (defn reset-chan! 
   [^SelectableChannel chan]
-  (let [selection-key (.keyFor chan (.selector #^Reactor *reactor*))]
+  (let [selection-key (.keyFor chan (selector *reactor*))]
     (when selection-key 
       (.attach selection-key nil)
       (when (.isValid selection-key)
        (.cancel selection-key)))))
 
 (defn stop!
-  "Stop the reactor"
   []
-  (.stop #^Reactor *reactor*))
-
-
+  (set-running! *reactor* false))
