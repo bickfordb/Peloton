@@ -1,6 +1,7 @@
 (ns web-example
   (:gen-class)
   (:use peloton.util)
+  (:use [hiccup.core :only [html]])
   (:require [peloton.httpd :as httpd])
   (:require [peloton.reactor :as reactor]))
 
@@ -8,7 +9,7 @@
   "Return a page which says \"Hello from Peloton\""
   [conn] 
   (httpd/set-content-type-html! conn)
-  (httpd/set-response-body! conn "<h1>Hello from Peloton</h1>")
+  (httpd/set-response-body! conn (html [:html [:body [:h1 "Hello from Peloton"]]]))
   (httpd/send-response! conn))
 
 (defn chunk-loop 
@@ -16,7 +17,7 @@
   (when (not (httpd/finished? conn))
     (httpd/send-chunk! 
       conn 
-      (format "<script>x++;document.getElementById(\"foo\").innerHTML = \"\" + x;</script>"))
+      (html [:script "x++; f(x);"]))
     (httpd/flush-output! conn)
     (reactor/timeout! 1.0 chunk-loop conn)))
 
@@ -25,8 +26,18 @@
   [conn]
   (httpd/set-content-type-html! conn)
   (httpd/start-chunked-response! conn)
-  (httpd/send-chunk! conn "<script>x=0;</script><h1 id=foo>1</h1>")
-  (httpd/send-chunk! conn (format "%1024s" "")) ; I read on the internet that 1K tends to escape browser buffer boundaries
+  (httpd/send-chunk! 
+    conn 
+    (html [:html 
+           [:body
+             [:h1 {:id "foo"} "1"]
+             [:script "
+               x=0;
+               function f(n) { 
+                 document.getElementById(\"foo\").innerHTML = \"\" + n;
+               }"]]]))
+  ; flush browser buffer
+  (httpd/send-chunk! conn (format "%1024s" ""))
   (httpd/flush-output! conn)
   (reactor/timeout! 1.0 chunk-loop conn))
 
