@@ -1,9 +1,11 @@
 (ns peloton.mime)
 
-(def appliation-octet-stream "application/octet-stream")
+(def application-octet-stream "application/octet-stream")
 (def common-ext-to-mime-types 
   {".clj" "application/clojure"
    ".mp3" "application/mp3"
+   ".css" "text/css"
+   ".js" "application/javascript"
    ".conf" "text/plain"
    ".jpg" "image/jpeg"
    ".gif" "image/gif"
@@ -12,7 +14,7 @@
    ".html" "text/html"
    ".htm" "text/html"
    ".txt" "text/plain"
-   nil appliation-octet-stream})
+   nil application-octet-stream})
 
 (defn- get-ext
   [^String path] 
