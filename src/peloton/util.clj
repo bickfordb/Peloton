@@ -144,3 +144,12 @@
     (if (nil? x#) ~a-default x#)))
 
 
+(defn encode-utf8
+  ^bytes [^String s]
+  (when s
+    (.getBytes s #^Charset UTF-8)))
+
+(defn decode-utf8
+  ^String [^bytes bs]
+  (when bs 
+    (String. bs #^Charset UTF-8)))

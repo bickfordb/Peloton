@@ -91,7 +91,7 @@
   ByteArrayOutputStream
   (put-bytes! [self b] (.write self b))
   (put-string! [self s]
-    (.write self (.getBytes s))))
+    (.write self (encode-utf8 s))))
 
 (defn encode-params
   [params]
@@ -120,8 +120,8 @@
                   :else query)
           ^bytes body' (cond 
                          (and (= method "POST") 
-                              encoded-params) (.getBytes encoded-params)
-                         (string? body) (.getBytes #^String body)
+                              encoded-params) (encode-utf8 encoded-params)
+                         (string? body) (encode-utf8 body)
                          :else body)
           headers' (-> headers
                     (add-header-if-missing "Host" host)
@@ -174,7 +174,7 @@
                     (.compact bb)
                     (.write a-byte-array #^int (int a-byte))
                     (cond 
-                      empty-line (f (String. (.toByteArray a-byte-array)))
+                      empty-line (f (decode-utf8 (.toByteArray a-byte-array)))
                       is-nl? (recur 0)
                       :else (recur (inc line-len))))))))))
 
@@ -208,7 +208,7 @@
 (defn read-chunk-len! 
   [a-reactor chan]
   (dofut [^bytes line (peloton.io/read-line! a-reactor chan)
-         ^String line-s (.trim (String. line))]
+         ^String line-s (.trim (decode-utf8 line))]
          (when (and line-s (not (empty? line-s)))
            (Integer/parseInt line-s 16))))
 

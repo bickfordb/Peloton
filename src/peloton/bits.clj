@@ -2,7 +2,6 @@
   (:import java.io.ByteArrayInputStream)
   (:import java.io.ByteArrayOutputStream)
   (:import java.nio.ByteBuffer)
-  (:import java.nio.charset.Charset)
   (:use peloton.util))
 
 (defn put-le-i32! 
@@ -28,7 +27,7 @@
 (defn put-cstring!
   [^ByteArrayOutputStream bs
    ^String a-str]
-  (.write bs (.getBytes a-str #^Charset UTF-8))
+  (.write bs (encode-utf8 a-str))
   (.write bs 0))
 
 (defn read-le-i32!
@@ -67,7 +66,7 @@
       (let [b (read-i8! bs)]
         (cond 
           (nil? b) nil
-          (= b 0x0) (String. (.toByteArray buf) #^Charset UTF-8)
+          (= b 0x0) (decode-utf8 (.toByteArray buf))
           :else (let []
                   (.write buf b)
                   (recur)))))))

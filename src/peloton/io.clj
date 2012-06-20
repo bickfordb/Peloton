@@ -4,7 +4,6 @@
   (:import java.nio.ByteOrder)
   (:import java.nio.channels.SelectionKey)
   (:import java.nio.channels.SocketChannel)
-  (:import java.nio.charset.Charset)
   (:require [peloton.reactor :as reactor])
   (:use peloton.fut)
   (:use peloton.util) 

@@ -7,7 +7,6 @@
   (:import java.nio.channels.SelectionKey)
   (:import java.nio.channels.Selector)
   (:import java.nio.channels.SocketChannel)
-  (:import java.nio.charset.Charset)
   (:import java.util.Vector)
   (:require [peloton.bits :as bits])
   (:require [peloton.bson :as bson])

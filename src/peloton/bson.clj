@@ -44,7 +44,7 @@
 (defn put-string! 
   [^ByteArrayOutputStream bs
    ^String s]
-  (let [b (.getBytes s #^Charset UTF-8)]
+  (let [b (encode-utf8 s)]
     (put-le-i32! bs (+ 1 (count b)))
     (.write bs b 0 (count b))
     (.write bs 0)))
@@ -81,7 +81,7 @@
         (string? v) (put-pair! bs 
                                0x02 
                                k 
-                               (let [b (.getBytes v #^Charset UTF-8)]
+                               (let [b (encode-utf8 v)]
                                  (put-le-i32! bs (inc (count b)))
                                  (.write bs b)
                                  (.write bs (byte 0))))
@@ -174,7 +174,7 @@
                                             k
                                             (let [doc-bytes (encode-doc (:scope v))
                                                   d-len (count doc-bytes)
-                                                  s-bytes (.getBytes #^String (:code v) #^Charset UTF-8)
+                                                  s-bytes (encode-utf8 v)
                                                   s-len (count s-bytes)
                                                   n (+ 4 4 s-len 1 d-len)]
                                               (put-le-i32! bs n)
@@ -233,7 +233,7 @@
       (let [b (read-i8! bs)]
         (cond 
           (nil? b) nil
-          (= b 0x0) (String. (.toByteArray buf) #^Charset UTF-8)
+          (= b 0x0) (decode-utf8 (.toByteArray buf))
           :else (let []
                   (.write buf b)
                   (recur)))))))

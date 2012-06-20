@@ -12,7 +12,6 @@
   (:import java.util.Vector)
   (:import java.nio.ByteBuffer)
   (:import java.net.InetSocketAddress)
-  (:import java.nio.charset.Charset)
   (:import java.nio.channels.FileChannel)
   (:import java.io.File)
   (:import java.io.RandomAccessFile)
@@ -195,7 +194,7 @@
   ; FIXME: read the character set in from the request headers
   ; FIXME: handle multi-part requests
   (let [^bytes body (body (request conn))
-        s (safe "" (String. body #^Charset UTF-8))
+        s (safe "" (decode-utf8 body))
         data (parse-qs s)]
     data))
 
@@ -208,7 +207,7 @@
   [^Connection conn ; the connection
    ^String s ; the body to be encoded as UTF-8
    ]
-  (set-body! (response conn) (.getBytes s #^Charset UTF-8)))
+  (set-body! (response conn) (encode-utf8 s)))
 
 (defn bind!
   [ports backlog]
@@ -319,7 +318,7 @@
    ^String s
    ^IFn f ; callable
    ] 
-  (write-bytes! conn (.getBytes s #^Charset UTF-8) f))
+  (write-bytes! conn (encode-utf8 s) f))
 
 (defn send-headers!
   [^Connection conn
@@ -376,7 +375,7 @@
 (defn send-chunk!
   [^Connection conn
    ^String s]
-  (send-chunk-bytes! conn (.getBytes s #^Charset UTF-8)))
+  (send-chunk-bytes! conn (encode-utf8 s)))
   
 (defn finish-chunked-response!
   [^Connection conn]
@@ -462,7 +461,7 @@
 
 (defn process-headers!
   [conn ^bytes some-bytes]
-  (let [a-string (String. some-bytes #^Charset UTF-8)
+  (let [a-string (decode-utf8 some-bytes)
         all-header-lines (seq (.split a-string "\r\n"))
         [request-line & other-lines] all-header-lines
         request-parsed (parse-request-line request-line)
