@@ -45,4 +45,5 @@
   (httpd/serve! {:ports [8080]
                  :listen-backlog 100}
     [:GET #"^/chunked$" on-chunked]
+    [:GET #"^/resources/(.+)$" (httpd/create-file-handler "peloton/" :resource? true)]
     [:GET #"^/$" on-index]))

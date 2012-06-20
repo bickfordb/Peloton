@@ -581,7 +581,7 @@
           (< amt 0) (close-conn! conn)
           (= amt 0) (peloton.reactor/on-reactor-writable-once! (reactor conn) (socket-channel conn) write-file-channel! conn channel offset len)
           :else (recur (+ offset amt) (- len amt))))
-      (finish-response!))))
+      (finish-response! conn))))
 
 (def range-pat #"bytes=(\d+)(?:-(\d+))?")
 
@@ -594,11 +594,19 @@
 
 (defn create-file-handler
   [^String dir & opts]
-  (let [opts0 (apply hash-map opts)
-        mime-types (get opts0 :mime-types peloton.mime/common-ext-to-mime-types)]
+  (let [opts' (apply hash-map opts)
+        {:keys [resource? mime-types class-loader] 
+         :or {resource? false
+              ^ClassLoader class-loader (ClassLoader/getSystemClassLoader) 
+              mime-types peloton.mime/common-ext-to-mime-types}} opts']
     (fn [^Connection conn 
          ^String path] 
-      (let [^RandomAccessFile f (safe nil (java.io.RandomAccessFile. (File. (java.io.File. dir) path) "r"))
+      (let [^java.io.File a-file (cond
+                     resource? (let [^String path' (str dir "/" path) 
+                                     ^java.net.URL url (.getResource #^ClassLoader class-loader path')]
+                                 (when url (java.io.File. (.getFile url))))
+                     :else (java.io.File. (java.io.File. dir) path))
+            ^RandomAccessFile f (safe nil (java.io.RandomAccessFile. a-file "r"))
             ch (when (not-nil? f) (safe nil (.getChannel f)))]
         (if (nil? ch)
           (not-found! conn)
@@ -611,7 +619,7 @@
                 len (if (nil? range-end-byte) 
                       (- sz offset) 
                       (+ (inc (- range-end-byte range-start-byte))))
-                after-headers (fn [] (write-file-channel! conn ch offset len))]
+                after-headers (fn [succ] (write-file-channel! conn ch offset len))]
             (add-response-header! conn "Content-Type" (peloton.mime/guess-mime-type-of-path path mime-types))
             (add-response-header! conn "Accept-Ranges" "bytes")
             (add-response-header! conn "Content-Length" len)
