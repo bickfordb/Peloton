@@ -1,4 +1,4 @@
-(ns blog-example
+(ns peloton.example.blog
   (:require [hiccup.core :as hiccup])
   (:require [peloton.httpd :as httpd])
   (:require [peloton.mongo :as mongo])

@@ -1,4 +1,4 @@
-(ns mongo-example
+(ns peloton.example.mongo
   (:gen-class)
   (:require [peloton.reactor :as reactor])
   (:use peloton.reactor)

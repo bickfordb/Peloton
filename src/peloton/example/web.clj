@@ -1,4 +1,4 @@
-(ns web-example
+(ns peloton.example.web
   (:gen-class)
   (:use peloton.util)
   (:use [hiccup.core :only [html]])
