@@ -58,6 +58,9 @@ Included are the following features:
 
 Usage
 -------
+#### Leiningen
+
+Add `[peloton/peloton "0.1.1"]` to your `project.clj`
 
 #### HTTPD
 ```clojure
