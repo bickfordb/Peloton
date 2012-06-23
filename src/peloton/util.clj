@@ -27,7 +27,7 @@
       (Integer. s))
     (catch Exception e nil)))
 
-(defonce empty-bytes 
+(defonce empty-bytes
   ;"Get an empty array"
   (bytes (into-array Byte/TYPE [])))
 
@@ -50,23 +50,23 @@
 (def amp-pat #"[&]")
 (def eq-pat #"=")
 
-(defn quote-plus 
-  [^String s] 
-  (if s (java.net.URLEncoder/encode s) ""))  
+(defn quote-plus
+  [^String s]
+  (if s (java.net.URLEncoder/encode s) ""))
 
 (defn parse-qs
   "Parse query string / form URL encoded data"
   [s]
   (cond
     (nil? s) []
-    :else (filter #(not (nil? %)) 
+    :else (filter #(not (nil? %))
                   (for [p (clojure.string/split s amp-pat)]
                     (let [[l r] (clojure.string/split p eq-pat 2)
                           k (if l (java.net.URLDecoder/decode l) "")
                           v (if r (java.net.URLDecoder/decode r) "")]
                       (when (not (= k "")) [(keyword k) v]))))))
 
-(defn re-find0 
+(defn re-find0
   "A version of re-find that consistently returns a sequence instead of sometimes returning a string or nil."
   [& xs]
   (let [ret (apply re-find xs)]
@@ -75,32 +75,32 @@
       (string? ret) [ret]
       :else ret)))
 
-(defn to-flag-bits 
-  "Convert a mapping of flags (keyword -> boolean) and a flag definition mapping (keyword -> number) to a number. 
+(defn to-flag-bits
+  "Convert a mapping of flags (keyword -> boolean) and a flag definition mapping (keyword -> number) to a number.
   "
   ^long
   [mapping flag-bit-def]
   (apply bit-or 0 (for [[flag-kw flag-bit] flag-bit-def]
                     (if (get mapping flag-kw false) flag-bit 0))))
 
-(defn from-flag-bits 
+(defn from-flag-bits
   "Convert a flag bits (encoded in a number) into a mapping of {flagi bool}"
   [^long flag-bits flag-bit-def]
   (apply assoc {} (apply concat
                          (for [[flag-kw flag-bit] flag-bit-def]
                            [flag-kw (> (bit-and flag-bit flag-bits) 0)]))))
 
-(defmacro with-stderr 
+(defmacro with-stderr
   "Run body using stderr
 
   e.g. To print \"hello\" to stderr:
      (with-stderr
         (println \"hello\"))
   "
-  [ & body] 
+  [ & body]
   `(binding [*out* *err*] ~@body))
 
-(defn nib 
+(defn nib
   "Takes all arguments and returns nil.
 
   This is useful as a callback argument where you don't care about the callback result.
@@ -110,15 +110,15 @@
 (defn encode-hex
   "Encode a sequence of numbers (byte-like values) to hex"
   [m]
-  (apply str (for [i m] 
+  (apply str (for [i m]
                (format "%x" i))))
 
-(defn num-processors 
+(defn num-processors
   "Get the number of processors"
   []
   (-> (Runtime/getRuntime) (.availableProcessors)))
 
-(defmacro spread 
+(defmacro spread
   "Execute body in N (processors) threads and return the result of each execution in a sequence."
   [& body]
   `(let [n# (num-processors)
@@ -138,7 +138,7 @@
      ~@body
      (catch Exception e# (.printStackTrace e#))))
 
-(defmacro default 
+(defmacro default
   [x a-default]
   `(let [x# ~x]
     (if (nil? x#) ~a-default x#)))
@@ -151,5 +151,19 @@
 
 (defn decode-utf8
   ^String [^bytes bs]
-  (when bs 
+  (when bs
     (String. bs #^Charset UTF-8)))
+
+(defmacro forever
+  [& xs]
+  `(loop []
+    ~@xs
+    (recur)))
+
+(defn exception->string
+  [exception]
+  (let [sw (java.io.StringWriter.)
+        pw (java.io.PrintWriter. sw)]
+        (.printStackTrace exception pw)
+        (.toString sw)))
+

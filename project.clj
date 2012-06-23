@@ -1,6 +1,8 @@
 (defproject peloton "0.1.1"
             :description "Peloton is a Clojure library to simplify the creation of high performance event-based web applications."
             :url "http://github.com/bickfordb/Peloton"
+            :eval-in-leiningen true
             :dependencies [[hiccup "1.0.0"]
+                           [ns-tracker "0.1.1"]
                            [org.clojure/tools.logging "0.2.3"]
                            [org.clojure/clojure "1.4.0"]])

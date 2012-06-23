@@ -1,5 +1,6 @@
 (ns peloton.httpd
   (:use peloton.util)
+  (:use [ns-tracker.core :only [ns-tracker]])
   (:require [peloton.http :as http])
   (:require peloton.mime)
   (:require [hiccup.core :as hiccup])
@@ -24,7 +25,7 @@
 (set! *warn-on-reflection* true)
 (def request-line-pat #"^\s*(\S+)\s+(\S+)\s+(\S+)\s*$") ; method, uri, protocol
 
-(defprotocol IBody 
+(defprotocol IBody
   (^String protocol [r])
   (set-protocol! [r ^String s])
   (^PersistentQueue headers [r])
@@ -57,10 +58,10 @@
   (body [this] body)
   (set-body! [this b] (set! body b)))
 
-(defn empty-request 
-  [] 
-  (Request. 
-    "GET" 
+(defn empty-request
+  []
+  (Request.
+    "GET"
     "/"
     "HTTP/1.1"
     (PersistentQueue/EMPTY)
@@ -91,11 +92,11 @@
   (body [this] body)
   (set-body! [this b] (set! body b)))
 
-(def date-fmt (doto 
+(def date-fmt (doto
                 (java.text.SimpleDateFormat. "EEE, dd MMM yyyy HH:mm:ss z")
                 (.setTimeZone (java.util.TimeZone/getTimeZone "GMT"))))
 
-(defn empty-response 
+(defn empty-response
   []
   (Response.
     200
@@ -105,7 +106,7 @@
      ["Server" "peloton/-inf"]
      ["Date" (.format #^java.text.SimpleDateFormat date-fmt (java.util.Date.))])
     empty-bytes))
- 
+
 (defprotocol IConnection
  (^peloton.reactor.Reactor reactor [conn])
  (^SocketChannel socket-channel [conn])
@@ -143,12 +144,12 @@
   (sending? [this] sending?)
   (set-sending! [this x?] (set! sending? (boolean x?)))
   (request-handler [this] request-handler))
- 
-(defn empty-connection 
+
+(defn empty-connection
   ^Connection
-  [reactor socket-channel request-handler in-buffer-size] 
+  [reactor socket-channel request-handler in-buffer-size]
   (Connection.
-    reactor 
+    reactor
     socket-channel
     (empty-request)
     (empty-response)
@@ -160,20 +161,20 @@
     false
     request-handler))
 
-(defn set-response-status! 
-  [^Connection conn ^long st] 
+(defn set-response-status!
+  [^Connection conn ^long st]
   (set-status! (response conn) st))
 
-(defn set-response-message! 
-  [^Connection conn ^String m] 
-  (set-message! (response conn) m)) 
+(defn set-response-message!
+  [^Connection conn ^String m]
+  (set-message! (response conn) m))
 
 (def uri-pat #"^([^?#]+)(?:[?]([^#]+))?(?:[#](.+))?$")
 
 (defn parse-uri
   [uri]
-  (cond 
-    (nil? uri) {:path "" 
+  (cond
+    (nil? uri) {:path ""
                 :query ""
                 :fragment ""}
     :else (let [match (re-find uri-pat uri)
@@ -213,36 +214,36 @@
   [ports backlog]
   (let [ssc (ServerSocketChannel/open)]
     (.configureBlocking ssc false)
-    (doseq [port ports] 
+    (doseq [port ports]
       (.bind (.socket ssc) (InetSocketAddress. port) backlog))
     ssc))
 
 (defn add-response-header!
  [^Connection conn name value]
-  (set-headers! 
-    (response conn) 
+  (set-headers!
+    (response conn)
     (conj (headers (response conn)) [name value])))
 
-(defn set-response-header! 
+(defn set-response-header!
   "Set a response header"
-  [^Connection conn 
-   ^String header-name 
+  [^Connection conn
+   ^String header-name
    ^String header-value]
   (set-headers! (response conn)
         (conj
           (filter (fn [[^String h v]] (not (.equalsIgnoreCase h header-name))) (headers (response conn)))
           [header-name header-value])))
 
-(defn set-content-type! 
-  [conn content-type] 
+(defn set-content-type!
+  [conn content-type]
   (set-response-header! conn "Content-Type" content-type))
 
 (defn set-content-type-html!
-  [conn] 
+  [conn]
   (set-response-header! conn "Content-Type" "text/html; charset=utf8"))
 
 (defn set-content-type-json!
-  [conn] 
+  [conn]
   (set-response-header! conn "Content-Type" "application/json"))
 
 (defn close-conn!
@@ -268,33 +269,33 @@
 (defn send-buffers!'
   [^Connection conn]
   (loop []
-    (cond 
-      (empty? (out-buffers conn)) (do 
+    (cond
+      (empty? (out-buffers conn)) (do
                                       (set-sending! conn false)
                                       (when (finished? conn)
                                         (close-conn! conn)))
       :else (let [bufs (out-buffers conn)
                   [[^ByteBuffer buf f] & _] bufs]
-              (cond 
-                (or (not buf) (== (.remaining buf) 0)) (do 
+              (cond
+                (or (not buf) (== (.remaining buf) 0)) (do
                                                          (when f (f true))
                                                          (set-out-buffers! conn (rest (out-buffers conn)))
                                                          (recur))
                 :else (let [non-empty-bufs (remove nil? (map first bufs))
-                            ^"[Ljava.nio.ByteBuffer;" buf-arr (.toArray #^java.util.Collection non-empty-bufs #^"[Ljava.nio.ByteBuffer;" barr) 
+                            ^"[Ljava.nio.ByteBuffer;" buf-arr (.toArray #^java.util.Collection non-empty-bufs #^"[Ljava.nio.ByteBuffer;" barr)
                             amt (safe -1 (.write (socket-channel conn) buf-arr))]
-                        (condp = amt 
+                        (condp = amt
                           -1 (do
-                               (when f 
+                               (when f
                                  (f false))
                                (set-out-buffers! conn (rest (out-buffers conn)))
                                (recur))
-                          0 (peloton.reactor/on-reactor-writable-once! 
+                          0 (peloton.reactor/on-reactor-writable-once!
                               (reactor conn)
                               (socket-channel conn)
                               send-buffers!' conn)
                           (recur))))))))
-                          
+
 (defn write-buffer!
   "Write a buffer"
   [^Connection conn
@@ -307,17 +308,17 @@
     (set-sending! conn true)
     (send-buffers!' conn)))
 
-(defn write-bytes! 
+(defn write-bytes!
   [^Connection conn
-   ^bytes b 
+   ^bytes b
    ^IFn f] ; callable
   (write-buffer! conn (ByteBuffer/wrap b) f))
-  
+
 (defn write-string!
   [^Connection conn
    ^String s
    ^IFn f ; callable
-   ] 
+   ]
   (write-bytes! conn (encode-utf8 s) f))
 
 (defn send-headers!
@@ -349,7 +350,7 @@
   (let [^Response response (response conn)
         headers (headers response)
         body (body response)]
-    (when (nil? (http/get-header headers "Content-Length")) 
+    (when (nil? (http/get-header headers "Content-Length"))
       (add-response-header! conn "Content-Length" (str (count body))))
     (send-headers! conn nil)
     (when body
@@ -376,13 +377,13 @@
   [^Connection conn
    ^String s]
   (send-chunk-bytes! conn (encode-utf8 s)))
-  
+
 (defn finish-chunked-response!
   [^Connection conn]
   (write-string! conn "0\r\n\r\n" nil)
   (finish-response! conn))
 
-(defn fill-in-buffer! 
+(defn fill-in-buffer!
   [conn after]
   (let [buf (in-buffer conn)
         chan (socket-channel conn)]
@@ -397,9 +398,9 @@
 (defn on-body
   [^Connection conn
    ^ByteBuffer buffer]
-  (cond 
+  (cond
     (nil? buffer) (close-conn! conn)
-    :else (do 
+    :else (do
             (set-body! (request conn) (.array buffer))
             ((request-handler conn) conn))))
 
@@ -408,13 +409,13 @@
   [^Connection conn]
   (safe-int (http/get-header (headers (request conn)) "Content-Length")))
 
-(defn parse-header-line 
+(defn parse-header-line
   [^String line]
   (let [m (re-find http/header-pat line)]
     (when m [(get m 1) (get m 2)])))
 
 (defn parse-request-line
-  [^String line] 
+  [^String line]
   (let [m (re-find request-line-pat line)]
     (when m
       {:method (.toUpperCase #^String (get m 1))
@@ -422,12 +423,12 @@
        :protocol (get m 3)})))
 
 
-(defn read-to-buf! 
+(defn read-to-buf!
   [conn ^ByteBuffer buffer f]
   (let [in-buffer (in-buffer conn)
         chan (socket-channel conn)]
     (loop []
-      (cond 
+      (cond
         (= (.remaining buffer) 0) (f)
         (> (.remaining in-buffer) 0) (do (.put buffer in-buffer)
                                          (recur))
@@ -443,7 +444,7 @@
 (defn read-body!
   [conn len]
   (let [a-buf (ByteBuffer/allocate len)]
-    (read-to-buf! 
+    (read-to-buf!
       (socket-channel conn)
       a-buf
       #(if (= (.remaining a-buf) len)
@@ -457,7 +458,7 @@
         content-length' (max content-length 0)]
     (if (> content-length' 0)
       (read-body! conn content-length'))))
-      
+
 
 (defn process-headers!
   [conn ^bytes some-bytes]
@@ -469,16 +470,16 @@
         headers (map parse-header-line (rest all-header-lines))
         headers' (remove nil? headers)
         request (request conn)]
-        (when uri 
+        (when uri
           (set-uri! request uri))
         (when method
           (set-method! request method))
-        (when protocol 
+        (when protocol
           (set-protocol! request protocol))
         (set-headers! request headers')
         ((request-handler conn) conn)))
 
-(defn read-headers'! 
+(defn read-headers'!
   [conn ^ByteArrayOutputStream bs line-len]
   (let [buf (in-buffer conn)]
      (loop [line-len line-len]
@@ -487,20 +488,20 @@
         :else (do
                 (let [a-byte (.get buf)]
                   (.write bs (int a-byte))
-                  (cond 
+                  (cond
                     ; if we get a newline and the line length is 1 (just a /cr) we're done
                     (and (== a-byte 10) (= line-len 1)) (process-headers! conn (.toByteArray bs))
                     (== a-byte 10) (recur 0)
                     ; FIXME: check for excessively long headers here?
                     :else (recur (inc line-len)))))))))
 
-(defn read-headers! 
-  [conn] 
+(defn read-headers!
+  [conn]
   (let [bs (ByteArrayOutputStream. 128)]
     (read-headers'! conn bs 0)))
 
-(defn on-accept 
-  [reactor request-handler] 
+(defn on-accept
+  [reactor request-handler]
   (let [^ServerSocketChannel server-socket-chan (.channel peloton.reactor/selection-key)]
     (loop [^SocketChannel socket-channel (.accept server-socket-chan)]
       (when socket-channel
@@ -524,11 +525,11 @@
 
 (defn not-found!
   [^Connection conn]
-  (set-response-status! conn 404)  
-  (set-response-message! conn "Not Found")  
+  (set-response-status! conn 404)
+  (set-response-message! conn "Not Found")
   (send-html! conn [:body [:h1 "404 Not Found"]]))
 
-(defn see-other! 
+(defn see-other!
   [conn uri]
   (set-response-header! conn "Location" uri)
   (set-response-status! conn 303)
@@ -543,35 +544,36 @@
       (loop [routes0 routes]
         (if (empty? routes0)
           (not-found! %)
-          (let [[[pat-method pat-uri handler] & t] routes0]
-            (if (or (= pat-method :any) 
+          (let [[[pat-method pat-uri handler & handler-args] & t] routes0]
+            (if (or (= pat-method :any)
                     (= (name pat-method) (method request)))
               (let [[match & match-args] (re-find0 pat-uri path)]
-                (if match 
-                  (apply handler % match-args)
+                (if match
+                  (apply handler % (concat handler-args match-args))
                   (recur t)))
               (recur t)))))))
 
 (defn listen!
   "Listen for connections"
-  [^ServerSocketChannel server-socket-channel 
+  [^ServerSocketChannel server-socket-channel
    handler]
   (peloton.reactor/on-acceptable! server-socket-channel on-accept peloton.reactor/*reactor* handler))
 
 (defn serve!
-  [opts 
+  [opts
    & routes]
-  (let [{:keys [listen-backlog ports] 
-         :or {listen-backlog 100 ports [8080]}} opts
+  (let [{:keys [listen-backlog ports]
+         :or {listen-backlog 100
+              ports [8080]}} opts
         channel (bind! ports listen-backlog)]
-      (spread 
-        (peloton.reactor/with-reactor 
+      (spread
+        (peloton.reactor/with-reactor
           (listen! channel (with-routes routes))))))
 
 (defn write-file-channel!
   [^Connection conn
-   ^FileChannel channel 
-   offset 
+   ^FileChannel channel
+   offset
    len]
   (loop [offset (max offset 0)
          len (max len 0)]
@@ -595,14 +597,14 @@
 (defn create-file-handler
   [^String dir & opts]
   (let [opts' (apply hash-map opts)
-        {:keys [resource? mime-types class-loader] 
+        {:keys [resource? mime-types class-loader]
          :or {resource? false
-              ^ClassLoader class-loader (ClassLoader/getSystemClassLoader) 
+              ^ClassLoader class-loader (ClassLoader/getSystemClassLoader)
               mime-types peloton.mime/common-ext-to-mime-types}} opts']
-    (fn [^Connection conn 
-         ^String path] 
+    (fn [^Connection conn
+         ^String path]
       (let [^java.io.File a-file (cond
-                     resource? (let [^String path' (str dir "/" path) 
+                     resource? (let [^String path' (str dir "/" path)
                                      ^java.net.URL url (.getResource #^ClassLoader class-loader path')]
                                  (when url (java.io.File. (.getFile url))))
                      :else (java.io.File. (java.io.File. dir) path))
@@ -616,8 +618,8 @@
                 range-header (http/get-header (headers (request conn)) "Range")
                 {:keys [range-start-byte range-end-byte]} (parse-range-header range-header)
                 offset (if (nil? range-start-byte) 0 range-start-byte)
-                len (if (nil? range-end-byte) 
-                      (- sz offset) 
+                len (if (nil? range-end-byte)
+                      (- sz offset)
                       (+ (inc (- range-end-byte range-start-byte))))
                 after-headers (fn [succ] (write-file-channel! conn ch offset len))]
             (add-response-header! conn "Content-Type" (peloton.mime/guess-mime-type-of-path path mime-types))
@@ -633,3 +635,97 @@
             (send-headers! conn nil)
             (write-buffer! conn (ByteBuffer/wrap empty-bytes) after-headers)))))))
 
+(defn report-module-changes
+  [mods check-interval dirs]
+  (require 'ns-tracker.core)
+  (let [list-changed-modules (ns-tracker dirs)]
+  (forever
+    (swap! mods concat (seq (list-changed-modules)))
+    (Thread/sleep (* 1000.0 check-interval)))))
+
+(defn serve-handler!
+  [channels handler & opts]
+  (let [opts' (apply hash-map opts)
+        {:keys [until-interval until init]
+         :or {until-interval 1.0}} opts']
+    (spread
+      (peloton.reactor/with-reactor
+        (doseq [chan channels]
+          (listen! chan handler))
+        (when until
+          (peloton.reactor/stop-when! until until-interval))
+        (when init
+          (init))))))
+
+(defn expect-module!
+  [a-module channels]
+  (let [is-loaded (atom false)
+        last-stack-trace (atom nil)
+        load-module (fn []
+                      (try
+                        (require a-module :reload)
+                        true
+                        (catch Exception e
+                          (reset! last-stack-trace (exception->string e))
+                          false)))
+        loading-page (fn [conn]
+                       (doto conn
+                         (set-response-status! 503)
+                         (set-response-message! "Server Error")
+                         (send-html!
+                           [:html
+                            [:head
+                             [:style "* {font-family: georgia; }"]
+                             ]
+                            [:body
+                             [:h1 "Loading " [:i (name a-module)]]
+                             (when @last-stack-trace
+                               [:p
+                                [:h4 "Stack Trace:"]
+                                [:pre
+                                 [:blockquote @last-stack-trace]]])]])))]
+    (serve-handler! channels
+                    loading-page
+                    :until-interval 0.1
+                    :until load-module)))
+
+(defn serve-symbol!
+  "Helper function to run an HTTPD with a symbol name
+
+  module-handler-name -- string like \"my-module/handler\"
+  options:
+  :autoreload? -- boolean if true automatically reload changed modules.  defaults to true
+  :autoreload-dirs -- a list of directories to search for changed modules.  defaults to [\"src\"]
+  :addresses -- a list of addresses to bind
+  "
+  [^String module-handler-name & opts]
+  (let [opts' (apply hash-map opts)
+        {:keys [autoreload? addresses init autoreload-dirs autoreload-interval until]
+         :or {autoreload? true
+              autoreload-dirs ["src"]
+              autoreload-interval 1.0
+              until (constantly false)
+              addresses [8080]}} opts'
+        module-name (namespace module-handler-name)
+        mods-changed (atom [])
+        channels [(bind! addresses 100)]]
+    (when autoreload?
+      ; watch for module changes
+      (doto (Thread. #^clojure.lang.IFn (partial report-module-changes mods-changed
+                              autoreload-interval autoreload-dirs))
+        (.setDaemon true)
+        (.start)))
+    (loop []
+      (expect-module! (symbol module-name) channels)
+      (let [handler (resolve module-handler-name)
+            stop-at (when autoreload? #(if (> (count @mods-changed) 0) true false))
+            until' #(or (stop-at) (until))]
+        (serve-handler! channels handler
+                      :until-interval autoreload-interval
+                      :init init
+                      :until until')
+        (swap! mods-changed #(do
+                              (doseq [a-module %]
+                                (expect-module! a-module channels))
+                              [])))
+      (recur))))

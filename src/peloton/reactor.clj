@@ -179,6 +179,15 @@
       (when (.isValid selection-key)
        (.cancel selection-key)))))
 
+
 (defn stop!
   []
   (set-running! *reactor* false))
+
+(defn stop-when!
+  "Call f every interval seconds.  If f evaluates to true, stop the reactor"
+  [f interval]
+  (if (f)
+    (stop!)
+    (timeout! interval stop-when! f interval)))
+
