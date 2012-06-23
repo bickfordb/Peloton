@@ -1,4 +1,4 @@
-(defproject peloton "0.1.1"
+(defproject peloton "0.1.2"
             :description "Peloton is a Clojure library to simplify the creation of high performance event-based web applications."
             :url "http://github.com/bickfordb/Peloton"
             :dependencies [[hiccup "1.0.0"]
